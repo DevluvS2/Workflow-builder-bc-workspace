@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content = "width=device-width, initial-scale=1.0">
+
+    <title>Workflow Builder BC</title>
+
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+        }
+        
+        #canvas {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            background-color: white;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        #workspace {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+
+            /*
+             * Transform from the upper-left corner rather than
+             * from the center of the workspace.
+             */
+            transform-origin: 0 0;
+        }
+
+        #circle {
+            position: absolute;
+            width: 100px;
+            height: 100px;
+            background-color: gray;
+            border-radius: 50%;
+            left: 200px;
+            top: 150px;
+            cursor: grab;
+            touch-action: none;
+        }
+
+        #circle:active {
+            cursor: grabbing;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="canvas">
+        <div id="workspace">
+            <div id="circle"></div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById("canvas");
+        const workspace = document.getElementById("workspace");
+        const circle = document.getElementById("circle");
+        
+        let isDragging = false;
+        let offsetX = 0;
+        let offsetY = 0;
+
+        let circleX = 200;
+        let circleY = 150;
+
+        let scale = 1;
+        let panX = 0;
+        let panY = 0;
+
+        function updateWorkspace() {
+            workspace.style.transform =
+                "translate(" + panX + "px, " + panY + "px) scale(" + scale + ")";
+        }
+
+        function screenToWorkspace(clientX, clientY) {
+            const canvasRect = canvas.getBoundingClientRect();
+
+            const canvasX = clientX - canvasRect.left;
+            const canvasY = clientY - canvasRect.top;
+
+            return {
+                x: (canvasX - panX) / scale,
+                y: (canvasY - panY) / scale
+            };
+}
+
+        circle.addEventListener("pointerdown", function(event) {
+            isDragging = true;
+
+            const pointer = screenToWorkspace(
+                event.clientX,
+                event.clientY
+            );
+
+            offsetX = pointer.x - circleX;
+            offsetY = pointer.y - circleY;
+        });
+        
+        document.addEventListener("pointermove", function(event) {
+            if (isDragging === true) {
+                const pointer = screenToWorkspace(
+                    event.clientX,
+                    event.clientY
+                );
+
+                circleX = pointer.x - offsetX;
+                circleY = pointer.y - offsetY;
+
+                circle.style.left = circleX + "px";
+                circle.style.top = circleY + "px";
+            }
+        });
+
+        document.addEventListener("pointerup", function() {
+            isDragging = false;
+        });
+        
+        canvas.addEventListener("wheel", function(event) {
+            event.preventDefault();
+
+            const canvasRect = canvas.getBoundingClientRect();
+
+            const mouseX = event.clientX - canvasRect.left;
+            const mouseY = event.clientY - canvasRect.top;
+
+            const workspaceX = (mouseX - panX) / scale;
+            const workspaceY = (mouseY - panY) / scale;
+
+            if (event.deltaY < 0) {
+                scale = scale + 0.2;
+            } else {
+                scale = scale - 0.2;
+            }
+
+            if (scale < 0.2) {
+                scale = 0.2;
+            }
+
+            if (scale > 6) {
+                scale = 6;
+            }
+
+            panX = mouseX - workspaceX * scale;
+            panY = mouseY - workspaceY * scale;
+
+            updateWorkspace();
+        }, { passive: false });
+    </script>
+</body>
+</html>
