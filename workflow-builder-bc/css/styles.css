@@ -5,11 +5,17 @@
 body {
     margin: 0;
     overflow: hidden;
-    font-family: Arial, sans-serif;
+    font-family: Arial, Helvetica, sans-serif;
+    color: #1f2937;
+}
+
+button,
+input {
+    font: inherit;
 }
 
 button {
-    font: inherit;
+    cursor: pointer;
 }
 
 #app {
@@ -17,8 +23,432 @@ button {
     height: 100vh;
 }
 
+/* Entire application layout */
+
 .board {
+    display: grid;
+    grid-template-rows: 48px 1fr 32px;
     width: 100%;
     height: 100%;
     background-color: #f3f4f6;
+}
+
+/* Top menu */
+
+.menu-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 12px;
+    background-color: #1f2937;
+    color: white;
+    z-index: 100;
+}
+
+.menu-bar button {
+    padding: 6px 10px;
+    border: none;
+    border-radius: 4px;
+    background-color: transparent;
+    color: white;
+}
+
+.menu-bar button:hover {
+    background-color: #374151;
+}
+
+.menu-group {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.menu-label {
+    margin-right: 4px;
+    font-weight: bold;
+}
+
+.menu-spacer {
+    flex: 1;
+}
+
+.zoom-display {
+    min-width: 70px;
+    text-align: right;
+    font-size: 13px;
+    color: #d1d5db;
+}
+
+/* Main application area */
+
+.main-area {
+    position: relative;
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr) 260px;
+    min-height: 0;
+}
+
+.main-area.left-hidden {
+    grid-template-columns: minmax(0, 1fr) 260px;
+}
+
+.main-area.right-hidden {
+    grid-template-columns: 220px minmax(0, 1fr);
+}
+
+.main-area.left-hidden.right-hidden {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+/* Side panels */
+
+.side-panel {
+    min-width: 0;
+    overflow: auto;
+    background-color: #e5e7eb;
+    border-color: #cbd5e1;
+    border-style: solid;
+}
+
+.left-panel {
+    border-width: 0 1px 0 0;
+}
+
+.right-panel {
+    border-width: 0 0 0 1px;
+}
+
+.side-panel.hidden {
+    display: none;
+}
+
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px;
+    background-color: #d1d5db;
+    font-weight: bold;
+}
+
+.panel-header button {
+    padding: 4px 8px;
+    border: 1px solid #9ca3af;
+    border-radius: 4px;
+    background-color: white;
+}
+
+.panel-content {
+    padding: 12px;
+}
+
+.panel-description {
+    margin-top: 0;
+    color: #4b5563;
+    font-size: 14px;
+    line-height: 1.4;
+}
+
+.widget-library-button {
+    display: block;
+    width: 100%;
+    margin-bottom: 8px;
+    padding: 9px;
+    border: 1px solid #94a3b8;
+    border-radius: 5px;
+    background-color: white;
+    text-align: left;
+}
+
+.widget-library-button:hover {
+    background-color: #f8fafc;
+}
+
+.property-row {
+    margin-bottom: 12px;
+}
+
+.property-row label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 13px;
+    font-weight: bold;
+}
+
+.property-row input {
+    width: 100%;
+    padding: 7px;
+    border: 1px solid #9ca3af;
+    border-radius: 4px;
+}
+
+.property-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.property-actions button {
+    flex: 1;
+    padding: 7px;
+    border: 1px solid #9ca3af;
+    border-radius: 4px;
+    background-color: white;
+}
+
+.delete-button {
+    color: #b91c1c;
+}
+
+/* Canvas viewport */
+
+.workspace-container {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background-color: white;
+    user-select: none;
+}
+
+/*
+ * The workspace is larger than the viewport and contains all widgets.
+ * Zooming and panning are applied to this element.
+ */
+.workspace {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 3000px;
+    height: 2000px;
+    transform-origin: 0 0;
+
+    background-color: white;
+    background-image:
+        linear-gradient(#e5e7eb 1px, transparent 1px),
+        linear-gradient(
+            90deg,
+            #e5e7eb 1px,
+            transparent 1px
+        );
+
+    background-size: 20px 20px;
+}
+
+/* Workflow widgets */
+
+.widget {
+    position: absolute;
+    width: 170px;
+    min-height: 90px;
+    overflow: hidden;
+
+    border: 1px solid #64748b;
+    border-radius: 8px;
+    background-color: white;
+    box-shadow: 0 4px 10px rgb(0 0 0 / 12%);
+
+    cursor: grab;
+    touch-action: none;
+}
+
+.widget:hover {
+    border-color: #2563eb;
+}
+
+.widget.selected {
+    outline: 3px solid rgb(37 99 235 / 30%);
+    border-color: #2563eb;
+}
+
+.widget.dragging {
+    cursor: grabbing;
+    box-shadow: 0 8px 18px rgb(0 0 0 / 22%);
+}
+
+.widget-title {
+    padding: 8px 10px;
+    border-bottom: 1px solid #cbd5e1;
+    background-color: #e2e8f0;
+    font-weight: bold;
+}
+
+.widget-content {
+    padding: 12px 10px;
+    color: #475569;
+    font-size: 14px;
+}
+
+/* Workflow mini-map */
+
+.workflow-map {
+    position: absolute;
+    right: 16px;
+    bottom: 16px;
+    width: 200px;
+    height: 145px;
+    overflow: hidden;
+
+    border: 1px solid #64748b;
+    border-radius: 6px;
+    background-color: rgb(255 255 255 / 94%);
+    box-shadow: 0 4px 12px rgb(0 0 0 / 14%);
+    z-index: 20;
+}
+
+.workflow-map-title {
+    padding: 7px 9px;
+    border-bottom: 1px solid #cbd5e1;
+    background-color: #e2e8f0;
+    font-size: 13px;
+    font-weight: bold;
+}
+
+.workflow-map-content {
+    position: relative;
+    height: calc(100% - 31px);
+    overflow: hidden;
+    background-color: #f8fafc;
+}
+
+.workflow-map-empty {
+    padding: 10px;
+    color: #64748b;
+    font-size: 12px;
+}
+
+.workflow-map-item {
+    position: absolute;
+    width: 16px;
+    height: 10px;
+    border: 1px solid #1d4ed8;
+    border-radius: 2px;
+    background-color: #60a5fa;
+}
+
+/* Bottom stats bar */
+
+.stats-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+
+    padding: 0 12px;
+    background-color: #1f2937;
+    color: white;
+    font-size: 13px;
+}
+
+.panel-show-zone {
+    position: absolute;
+    top: 48px;
+    bottom: 32px;
+    width: 24px;
+    z-index: 50;
+
+    display: flex;
+    align-items: center;
+
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.panel-show-zone:hover {
+    opacity: 1;
+}
+
+.panel-show-zone.hidden {
+    display: none;
+}
+
+.left-show-zone {
+    left: 0;
+    justify-content: flex-start;
+}
+
+.right-show-zone {
+    right: 0;
+    justify-content: flex-end;
+}
+
+.panel-show-button {
+    width: 24px;
+    min-height: 64px;
+    padding: 4px 2px;
+
+    border: 1px solid #64748b;
+    background-color: #1f2937;
+    color: white;
+
+    font-size: 11px;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+
+    cursor: pointer;
+}
+
+.left-show-zone .panel-show-button {
+    border-radius: 0 5px 5px 0;
+}
+
+.right-show-zone .panel-show-button {
+    border-radius: 5px 0 0 5px;
+}
+
+.dropdown-menu {
+    position: relative;
+    height: 100%;
+    display: flex;
+    align-items: center;
+}
+
+.dropdown-button {
+    padding: 6px 10px;
+    border: none;
+    border-radius: 4px;
+    background-color: transparent;
+    color: white;
+}
+
+.dropdown-button:hover {
+    background-color: #374151;
+}
+
+.dropdown-content {
+    position: absolute;
+    top: 100%;
+    left: 0;
+
+    display: none;
+    min-width: 150px;
+
+    padding: 5px 0;
+    border: 1px solid #475569;
+    border-radius: 0 0 5px 5px;
+
+    background-color: #1f2937;
+    box-shadow: 0 6px 14px rgb(0 0 0 / 25%);
+
+    z-index: 200;
+}
+
+.dropdown-menu:hover .dropdown-content {
+    display: block;
+}
+
+.dropdown-content button {
+    display: block;
+    width: 100%;
+    padding: 8px 12px;
+
+    border: none;
+    border-radius: 0;
+    background-color: transparent;
+    color: white;
+
+    text-align: left;
+}
+
+.dropdown-content button:hover {
+    background-color: #374151;
 }
