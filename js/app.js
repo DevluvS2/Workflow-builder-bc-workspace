@@ -1,46 +1,48 @@
-const appElement = document.getElementById("app");
+const appElement =
+    document.getElementById("app");
 
-const board = new Board(appElement);
+const board =
+    new Board(appElement);
 
-/*
- * Add a few starter widgets so the application has an
- * example workflow when it first opens.
- */
-const startWidget = new Widget(
-    board,
-    "widget-1",
-    "Start",
-    "Start",
-    2600,
-    1950
-);
+const restored =
+    board.loadState();
 
-const processWidget = new Widget(
-    board,
-    "widget-2",
-    "Process Request",
-    "Process",
-    2900,
-    1950
-);
+if (!restored) {
+    const startWidget =
+        new Widget(
+            board,
+            "widget-1",
+            "Start",
+            "Start",
+            120,
+            120
+        );
 
-const endWidget = new Widget(
-    board,
-    "widget-3",
-    "Finish",
-    "End",
-    3200,
-    1950
-);
+    const processWidget =
+        new Widget(
+            board,
+            "widget-2",
+            "Process Request",
+            "Process",
+            380,
+            220
+        );
 
-board.addWidget(startWidget);
-board.addWidget(processWidget);
-board.addWidget(endWidget);
+    const endWidget =
+        new Widget(
+            board,
+            "widget-3",
+            "Finish",
+            "End",
+            650,
+            350
+        );
 
-board.nextWidgetNumber = 4;
+    board.addWidget(startWidget);
+    board.addWidget(processWidget);
+    board.addWidget(endWidget);
 
-/*
- * Always start the application looking at
- * the center of the workspace.
- */
-board.centerWorkspace();
+    board.nextWidgetNumber = 4;
+
+    board.saveState();
+}

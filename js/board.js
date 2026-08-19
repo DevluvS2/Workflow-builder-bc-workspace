@@ -32,6 +32,11 @@ class Board {
 
         this.nextWidgetNumber = 1;
 
+        this.storageKey =
+            "workflowBuilderCurrentWorkflow";
+
+        this.saveTimer = null;
+
         document.addEventListener("keydown", (event) => {
             this.handleKeyDown(event);
         });
@@ -482,6 +487,8 @@ class Board {
 
         this.updateStats();
         this.updateWorkflowMap();
+
+        this.scheduleSave();
     }
 
     removeWidget(widget) {
@@ -504,6 +511,7 @@ class Board {
 
         this.updateStats();
         this.updateWorkflowMap();
+        this.scheduleSave();
     }
 
     handleKeyDown(event) {
@@ -691,6 +699,8 @@ class Board {
                 this.rightPanelVisible
             );
         }
+
+        this.scheduleSave();
     }
     handleWheel(event) {
         event.preventDefault();
@@ -739,6 +749,8 @@ class Board {
 
         this.updateWorkspaceTransform();
         this.updateStats();
+
+        this.scheduleSave();
     }
 
     updateWorkspaceTransform() {
@@ -1234,6 +1246,8 @@ class Board {
                 "pointercancel",
                 stopResize
             );
+
+            this.scheduleSave();
         };
 
         resizer.addEventListener(
@@ -1346,6 +1360,8 @@ class Board {
                 event.pointerId
             );
         }
+
+        this.scheduleSave();
     }
 
     centerViewFromMap(event) {
@@ -1676,6 +1692,74 @@ class Board {
         this.updateWorkspaceTransform();
         this.updateStats();
         this.updateWorkflowMap();
+
+        this.scheduleSave();
+    }
+
+    saveState() {
+        try {
+            const workflowData =
+                this.getWorkflowData();
+
+            localStorage.setItem(
+                this.storageKey,
+                JSON.stringify(
+                    workflowData
+                )
+            );
+        } catch (error) {
+            console.error(
+                "Could not save workflow:",
+                error
+            );
+        }
+    }
+
+    scheduleSave() {
+        clearTimeout(
+            this.saveTimer
+        );
+
+        this.saveTimer =
+            setTimeout(
+                () => {
+                    this.saveState();
+                },
+                250
+            );
+    }
+
+    loadState() {
+        const savedState =
+            localStorage.getItem(
+                this.storageKey
+            );
+
+        if (!savedState) {
+            return false;
+        }
+
+        try {
+            const workflowData =
+                JSON.parse(savedState);
+
+            this.applyWorkflowData(
+                workflowData
+            );
+
+            return true;
+        } catch (error) {
+            console.error(
+                "Saved workflow is invalid:",
+                error
+            );
+
+            localStorage.removeItem(
+                this.storageKey
+            );
+
+            return false;
+        }
     }
 
 }

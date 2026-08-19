@@ -142,6 +142,7 @@ class Widget {
         }
 
         this.board.updateStats();
+        this.board.scheduleSave();
     }
 
     updatePosition() {
@@ -167,6 +168,7 @@ class Widget {
         }
 
         this.board.updateWorkflowMap();
+        this.board.scheduleSave();
     }
 
     setType(newType) {
@@ -181,6 +183,8 @@ class Widget {
         if (this.contentElement) {
             this.contentElement.textContent = `Type: ${this.type}`;
         }
+
+        this.board.scheduleSave();
     }
 
     setSelected(isSelected) {
