@@ -8,6 +8,9 @@ class Board {
         this.leftPanelVisible = true;
         this.rightPanelVisible = true;
 
+        this.leftPanelWidth = 220;
+        this.rightPanelWidth = 260;
+
         this.zoom = 1;
         this.panX = 0;
         this.panY = 0;
@@ -147,6 +150,9 @@ class Board {
             "Widget Library"
         );
 
+        this.leftResizer =
+            this.createPanelResizer("left");
+
         this.workspaceContainer = this.createWorkspace();
 
         this.rightPanel = this.createPanel(
@@ -154,8 +160,13 @@ class Board {
             "Properties"
         );
 
+        this.rightResizer =
+            this.createPanelResizer("right");
+
         mainArea.appendChild(this.leftPanel);
+        mainArea.appendChild(this.leftResizer);
         mainArea.appendChild(this.workspaceContainer);
+        mainArea.appendChild(this.rightResizer);
         mainArea.appendChild(this.rightPanel);
 
         const leftShowZone = this.createPanelShowZone("left");
@@ -166,6 +177,8 @@ class Board {
 
         this.leftShowZone = leftShowZone;
         this.rightShowZone = rightShowZone;
+
+        this.applyPanelWidths();
 
         return mainArea;
     }
@@ -525,6 +538,11 @@ class Board {
                 !this.leftPanelVisible
             );
 
+            this.leftResizer.classList.toggle(
+                "hidden",
+                !this.leftPanelVisible
+            );
+
             this.mainArea.classList.toggle(
                 "left-hidden",
                 !this.leftPanelVisible
@@ -545,6 +563,11 @@ class Board {
                 !this.rightPanelVisible
             );
 
+            this.rightResizer.classList.toggle(
+                "hidden",
+                !this.rightPanelVisible
+            );
+
             this.mainArea.classList.toggle(
                 "right-hidden",
                 !this.rightPanelVisible
@@ -556,7 +579,6 @@ class Board {
             );
         }
     }
-
     handleWheel(event) {
         event.preventDefault();
 
@@ -927,5 +949,109 @@ class Board {
         showZone.appendChild(showButton);
 
         return showZone;
+    }
+
+    createPanelResizer(side) {
+        const resizer = document.createElement("div");
+
+        resizer.className =
+            `panel-resizer ${side}-panel-resizer`;
+
+        resizer.addEventListener(
+            "pointerdown",
+            (event) => {
+                this.startPanelResize(side, event);
+            }
+        );
+
+        return resizer;
+    }
+
+    startPanelResize(side, event) {
+        if (event.button !== 0) {
+            return;
+        }
+
+        event.preventDefault();
+
+        const resizer = event.currentTarget;
+
+        const startX = event.clientX;
+
+        const startWidth =
+            side === "left"
+                ? this.leftPanelWidth
+                : this.rightPanelWidth;
+
+        resizer.setPointerCapture(event.pointerId);
+
+        const resize = (moveEvent) => {
+            const movementX =
+                moveEvent.clientX - startX;
+
+            if (side === "left") {
+                this.leftPanelWidth =
+                    startWidth + movementX;
+
+                this.leftPanelWidth = Math.max(
+                    160,
+                    Math.min(500, this.leftPanelWidth)
+                );
+            } else {
+                this.rightPanelWidth =
+                    startWidth - movementX;
+
+                this.rightPanelWidth = Math.max(
+                    160,
+                    Math.min(500, this.rightPanelWidth)
+                );
+            }
+
+            this.applyPanelWidths();
+        };
+
+        const stopResize = () => {
+            resizer.removeEventListener(
+                "pointermove",
+                resize
+            );
+
+            resizer.removeEventListener(
+                "pointerup",
+                stopResize
+            );
+
+            resizer.removeEventListener(
+                "pointercancel",
+                stopResize
+            );
+        };
+
+        resizer.addEventListener(
+            "pointermove",
+            resize
+        );
+
+        resizer.addEventListener(
+            "pointerup",
+            stopResize
+        );
+
+        resizer.addEventListener(
+            "pointercancel",
+            stopResize
+        );
+    }
+
+    applyPanelWidths() {
+        this.mainArea.style.setProperty(
+            "--left-panel-width",
+            `${this.leftPanelWidth}px`
+        );
+
+        this.mainArea.style.setProperty(
+            "--right-panel-width",
+            `${this.rightPanelWidth}px`
+        );
     }
 }

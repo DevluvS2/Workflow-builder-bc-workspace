@@ -83,21 +83,39 @@ button {
 
 .main-area {
     position: relative;
+
+    --left-panel-width: 220px;
+    --right-panel-width: 260px;
+
     display: grid;
-    grid-template-columns: 220px minmax(0, 1fr) 260px;
+
+    grid-template-columns:
+        var(--left-panel-width)
+        6px
+        minmax(0, 1fr)
+        6px
+        var(--right-panel-width);
+
     min-height: 0;
 }
 
 .main-area.left-hidden {
-    grid-template-columns: minmax(0, 1fr) 260px;
+    grid-template-columns:
+        minmax(0, 1fr)
+        6px
+        var(--right-panel-width);
 }
 
 .main-area.right-hidden {
-    grid-template-columns: 220px minmax(0, 1fr);
+    grid-template-columns:
+        var(--left-panel-width)
+        6px
+        minmax(0, 1fr);
 }
 
 .main-area.left-hidden.right-hidden {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns:
+        minmax(0, 1fr);
 }
 
 /* Side panels */
@@ -451,4 +469,19 @@ button {
 
 .dropdown-content button:hover {
     background-color: #374151;
+}
+
+/* Resize Handles */
+.panel-resizer {
+    background-color: transparent;
+    cursor: col-resize;
+    touch-action: none;
+}
+
+.panel-resizer:hover {
+    background-color: #94a3b8;
+}
+
+.panel-resizer.hidden {
+    display: none;
 }
