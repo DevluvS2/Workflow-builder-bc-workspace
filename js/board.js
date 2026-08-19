@@ -18,6 +18,10 @@ class Board {
 
         this.nextWidgetNumber = 1;
 
+        document.addEventListener("keydown", (event) => {
+            this.handleKeyDown(event);
+        });
+
         this.render();
     }
 
@@ -374,6 +378,41 @@ class Board {
 
         this.updateStats();
         this.updateWorkflowMap();
+    }
+
+    handleKeyDown(event) {
+        /*
+        * Do not delete widgets while the user is typing
+        * inside an input field.
+        */
+        const activeElement = document.activeElement;
+
+        const isTyping =
+            activeElement &&
+            (
+                activeElement.tagName === "INPUT" ||
+                activeElement.tagName === "TEXTAREA" ||
+                activeElement.isContentEditable
+            );
+
+        if (isTyping) {
+            return;
+        }
+
+        if (
+            event.key === "Delete" &&
+            this.selectedWidget
+        ) {
+            event.preventDefault();
+
+            const confirmed = window.confirm(
+                `Delete "${this.selectedWidget.title}"?`
+            );
+
+            if (confirmed) {
+                this.removeWidget(this.selectedWidget);
+            }
+        }
     }
 
     selectWidget(widget) {
