@@ -11,8 +11,8 @@ const startWidget = new Widget(
     "widget-1",
     "Start",
     "Start",
-    120,
-    120
+    2600,
+    1950
 );
 
 const processWidget = new Widget(
@@ -20,8 +20,8 @@ const processWidget = new Widget(
     "widget-2",
     "Process Request",
     "Process",
-    380,
-    220
+    2900,
+    1950
 );
 
 const endWidget = new Widget(
@@ -29,8 +29,8 @@ const endWidget = new Widget(
     "widget-3",
     "Finish",
     "End",
-    650,
-    350
+    3200,
+    1950
 );
 
 board.addWidget(startWidget);
@@ -38,3 +38,9 @@ board.addWidget(processWidget);
 board.addWidget(endWidget);
 
 board.nextWidgetNumber = 4;
+
+/*
+ * Always start the application looking at
+ * the center of the workspace.
+ */
+board.centerWorkspace();

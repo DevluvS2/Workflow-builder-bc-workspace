@@ -10,10 +10,21 @@ class Board {
 
         this.leftPanelWidth = 220;
         this.rightPanelWidth = 260;
+        
+        this.workspaceWidth = 6000;
+        this.workspaceHeight = 4000;
 
         this.zoom = 1;
         this.panX = 0;
         this.panY = 0;
+        
+        this.isPanning = false;
+
+        this.panStartX = 0;
+        this.panStartY = 0;
+
+        this.panStartOffsetX = 0;
+        this.panStartOffsetY = 0;
 
         this.minimumZoom = 0.25;
         this.maximumZoom = 4;
@@ -256,6 +267,12 @@ class Board {
         const workspace = document.createElement("div");
         workspace.className = "workspace";
 
+        workspace.style.width =
+            `${this.workspaceWidth}px`;
+
+        workspace.style.height =
+            `${this.workspaceHeight}px`;
+
         const workflowMap = this.createWorkflowMap();
 
         workspaceContainer.appendChild(workspace);
@@ -269,9 +286,29 @@ class Board {
         workspaceContainer.addEventListener(
             "pointerdown",
             (event) => {
+                /*
+                * Middle mouse button starts canvas panning.
+                *
+                * event.button:
+                * 0 = left
+                * 1 = middle
+                * 2 = right
+                */
+                if (event.button === 1) {
+                    this.startPanning(event);
+                    return;
+                }
+
+                /*
+                * Normal left-click on empty canvas clears
+                * the selected widget.
+                */
                 if (
-                    event.target === workspaceContainer ||
-                    event.target === workspace
+                    event.button === 0 &&
+                    (
+                        event.target === workspaceContainer ||
+                        event.target === workspace
+                    )
                 ) {
                     this.selectWidget(null);
                 }
@@ -288,6 +325,36 @@ class Board {
             },
             {
                 passive: false
+            }
+        );
+
+        workspaceContainer.addEventListener(
+            "pointermove",
+            (event) => {
+                this.panCanvas(event);
+            }
+        );
+
+        workspaceContainer.addEventListener(
+            "pointerup",
+            (event) => {
+                this.stopPanning(event);
+            }
+        );
+
+        workspaceContainer.addEventListener(
+            "pointercancel",
+            (event) => {
+                this.stopPanning(event);
+            }
+        );
+
+        workspaceContainer.addEventListener(
+            "auxclick",
+            (event) => {
+                if (event.button === 1) {
+                    event.preventDefault();
+                }
             }
         );
 
@@ -309,6 +376,13 @@ class Board {
         workflowMap.appendChild(mapContent);
 
         this.workflowMapContent = mapContent;
+
+        mapContent.addEventListener(
+            "pointerdown",
+            (event) => {
+                this.centerViewFromMap(event);
+            }
+        );
 
         return workflowMap;
     }
@@ -344,13 +418,22 @@ class Board {
 
         const offset = (this.nextWidgetNumber - 1) * 30;
 
+        const center =
+            this.screenToWorkspace(
+                this.workspaceContainer.getBoundingClientRect().left +
+                    this.workspaceContainer.clientWidth / 2,
+
+                this.workspaceContainer.getBoundingClientRect().top +
+                    this.workspaceContainer.clientHeight / 2
+            );
+
         const widget = new Widget(
             this,
             id,
             title,
             type,
-            120 + offset,
-            100 + offset
+            center.x + offset,
+            center.y + offset
         );
 
         this.nextWidgetNumber += 1;
@@ -622,6 +705,8 @@ class Board {
         this.panY =
             mouseY - workspaceY * this.zoom;
 
+        this.constrainPan();
+
         this.updateWorkspaceTransform();
         this.updateStats();
     }
@@ -642,6 +727,8 @@ class Board {
             this.zoomDisplay.textContent =
                 `Zoom: ${percentage}%`;
         }
+
+        this.updateWorkflowMap();
     }
 
     screenToWorkspace(clientX, clientY) {
@@ -661,11 +748,7 @@ class Board {
     }
 
     resetView() {
-        this.zoom = 1;
-        this.panX = 0;
-        this.panY = 0;
-
-        this.updateWorkspaceTransform();
+        this.centerWorkspace();
         this.updateStats();
     }
 
@@ -816,7 +899,7 @@ class Board {
                 this.nextWidgetNumber =
                     this.widgets.length + 1;
 
-                this.updateWorkspaceTransform();
+                this.centerWorkspace();
                 this.updateStats();
                 this.updateWorkflowMap();
             } catch (error) {
@@ -875,6 +958,15 @@ class Board {
 
         this.workflowMapContent.innerHTML = "";
 
+        const mapWidth =
+            this.workflowMapContent.clientWidth || 198;
+
+        const mapHeight =
+            this.workflowMapContent.clientHeight || 112;
+
+        /*
+        * Draw each widget as a small rectangle.
+        */
         if (this.widgets.length === 0) {
             const emptyMessage =
                 document.createElement("div");
@@ -887,49 +979,136 @@ class Board {
             this.workflowMapContent.appendChild(
                 emptyMessage
             );
+        } else {
+            this.widgets.forEach((widget) => {
+                const mapItem =
+                    document.createElement("div");
 
-            return;
+                mapItem.className =
+                    "workflow-map-item";
+
+                mapItem.title = widget.title;
+
+                const mapX =
+                    (widget.x / this.workspaceWidth) *
+                    mapWidth;
+
+                const mapY =
+                    (widget.y / this.workspaceHeight) *
+                    mapHeight;
+
+                mapItem.style.left =
+                    `${Math.max(
+                        0,
+                        Math.min(
+                            mapWidth - 16,
+                            mapX
+                        )
+                    )}px`;
+
+                mapItem.style.top =
+                    `${Math.max(
+                        0,
+                        Math.min(
+                            mapHeight - 10,
+                            mapY
+                        )
+                    )}px`;
+
+                this.workflowMapContent.appendChild(
+                    mapItem
+                );
+            });
         }
 
         /*
-         * Map the 3000 × 2000 workspace into the small mini-map.
-         */
-        const mapWidth =
-            this.workflowMapContent.clientWidth || 198;
+        * Determine what part of the workspace
+        * is currently visible.
+        */
+        const worldLeft =
+            -this.panX / this.zoom;
 
-        const mapHeight =
-            this.workflowMapContent.clientHeight || 112;
+        const worldTop =
+            -this.panY / this.zoom;
 
-        const workspaceWidth = 3000;
-        const workspaceHeight = 2000;
+        const visibleWorldWidth =
+            this.workspaceContainer.clientWidth /
+            this.zoom;
 
-        this.widgets.forEach((widget) => {
-            const mapItem =
-                document.createElement("div");
+        const visibleWorldHeight =
+            this.workspaceContainer.clientHeight /
+            this.zoom;
 
-            mapItem.className = "workflow-map-item";
-            mapItem.title = widget.title;
+        /*
+        * Convert that visible area into mini-map coordinates.
+        */
+        let viewportLeft =
+            (worldLeft / this.workspaceWidth) *
+            mapWidth;
 
-            const mapX =
-                (widget.x / workspaceWidth) * mapWidth;
+        let viewportTop =
+            (worldTop / this.workspaceHeight) *
+            mapHeight;
 
-            const mapY =
-                (widget.y / workspaceHeight) * mapHeight;
+        let viewportWidth =
+            (visibleWorldWidth / this.workspaceWidth) *
+            mapWidth;
 
-            mapItem.style.left =
-                `${Math.max(
-                    0,
-                    Math.min(mapWidth - 16, mapX)
-                )}px`;
+        let viewportHeight =
+            (visibleWorldHeight / this.workspaceHeight) *
+            mapHeight;
 
-            mapItem.style.top =
-                `${Math.max(
-                    0,
-                    Math.min(mapHeight - 10, mapY)
-                )}px`;
+        /*
+        * Prevent the viewport rectangle from becoming
+        * invisible or extending outside the map.
+        */
+        viewportWidth = Math.min(
+            mapWidth,
+            Math.max(8, viewportWidth)
+        );
 
-            this.workflowMapContent.appendChild(mapItem);
-        });
+        viewportHeight = Math.min(
+            mapHeight,
+            Math.max(8, viewportHeight)
+        );
+
+        viewportLeft = Math.max(
+            0,
+            Math.min(
+                mapWidth - viewportWidth,
+                viewportLeft
+            )
+        );
+
+        viewportTop = Math.max(
+            0,
+            Math.min(
+                mapHeight - viewportHeight,
+                viewportTop
+            )
+        );
+
+        const viewport =
+            document.createElement("div");
+
+        viewport.className =
+            "workflow-map-viewport";
+
+        viewport.style.left =
+            `${viewportLeft}px`;
+
+        viewport.style.top =
+            `${viewportTop}px`;
+
+        viewport.style.width =
+            `${viewportWidth}px`;
+
+        viewport.style.height =
+            `${viewportHeight}px`;
+
+        this.workflowMapContent.appendChild(
+            viewport
+        );
     }
 
     createPanelShowZone(side) {
@@ -1054,4 +1233,202 @@ class Board {
             `${this.rightPanelWidth}px`
         );
     }
+
+    startPanning(event) {
+        /*
+        * Only allow the middle mouse button.
+        */
+        if (event.button !== 1) {
+            return;
+        }
+
+        event.preventDefault();
+
+        this.isPanning = true;
+
+        /*
+        * Record where the pointer started.
+        */
+        this.panStartX = event.clientX;
+        this.panStartY = event.clientY;
+
+        /*
+        * Record the current workspace translation.
+        */
+        this.panStartOffsetX = this.panX;
+        this.panStartOffsetY = this.panY;
+
+        /*
+        * Change the cursor while panning.
+        */
+        this.workspaceContainer.classList.add(
+            "panning"
+        );
+
+        /*
+        * Keep receiving pointer events even if the mouse
+        * leaves the workspace while dragging.
+        */
+        this.workspaceContainer.setPointerCapture(
+            event.pointerId
+        );
+    }
+
+    panCanvas(event) {
+        if (!this.isPanning) {
+            return;
+        }
+
+        const movementX =
+            event.clientX - this.panStartX;
+
+        const movementY =
+            event.clientY - this.panStartY;
+
+        this.panX =
+            this.panStartOffsetX + movementX;
+
+        this.panY =
+            this.panStartOffsetY + movementY;
+
+        this.constrainPan();
+
+        this.updateWorkspaceTransform();
+    }
+
+    stopPanning(event) {
+        if (!this.isPanning) {
+            return;
+        }
+
+        this.isPanning = false;
+
+        this.workspaceContainer.classList.remove(
+            "panning"
+        );
+
+        if (
+            this.workspaceContainer.hasPointerCapture(
+                event.pointerId
+            )
+        ) {
+            this.workspaceContainer.releasePointerCapture(
+                event.pointerId
+            );
+        }
+    }
+
+    centerViewFromMap(event) {
+        const mapRect =
+            this.workflowMapContent
+                .getBoundingClientRect();
+
+        const mapX =
+            event.clientX - mapRect.left;
+
+        const mapY =
+            event.clientY - mapRect.top;
+        /*
+        * Convert mini-map coordinates back into
+        * workspace coordinates.
+        */
+        const worldX =
+            (mapX / mapRect.width) *
+            this.workspaceWidth;
+
+        const worldY =
+            (mapY / mapRect.height) *
+            this.workspaceHeight;
+
+        /*
+        * Put that location in the center
+        * of the visible canvas.
+        */
+        this.panX =
+            this.workspaceContainer.clientWidth / 2 -
+            worldX * this.zoom;
+
+        this.panY =
+            this.workspaceContainer.clientHeight / 2 -
+            worldY * this.zoom;
+
+        this.updateWorkspaceTransform();
+    }
+
+    centerWorkspace() {
+        this.zoom = 1;
+
+        const viewportWidth =
+            this.workspaceContainer.clientWidth;
+
+        const viewportHeight =
+            this.workspaceContainer.clientHeight;
+
+        const centerX =
+            this.workspaceWidth / 2;
+
+        const centerY =
+            this.workspaceHeight / 2;
+
+        this.panX =
+            viewportWidth / 2 -
+            centerX * this.zoom;
+
+        this.panY =
+            viewportHeight / 2 -
+            centerY * this.zoom;
+
+        this.updateWorkspaceTransform();
+    }
+
+    constrainPan() {
+        const viewportWidth =
+            this.workspaceContainer.clientWidth;
+
+        const viewportHeight =
+            this.workspaceContainer.clientHeight;
+
+        const scaledWidth =
+            this.workspaceWidth * this.zoom;
+
+        const scaledHeight =
+            this.workspaceHeight * this.zoom;
+
+        /*
+        * Horizontal constraint
+        */
+        if (scaledWidth <= viewportWidth) {
+            this.panX =
+                (viewportWidth - scaledWidth) / 2;
+        } else {
+            const minimumPanX =
+                viewportWidth - scaledWidth;
+
+            const maximumPanX = 0;
+
+            this.panX = Math.max(
+                minimumPanX,
+                Math.min(maximumPanX, this.panX)
+            );
+        }
+
+        /*
+        * Vertical constraint
+        */
+        if (scaledHeight <= viewportHeight) {
+            this.panY =
+                (viewportHeight - scaledHeight) / 2;
+        } else {
+            const minimumPanY =
+                viewportHeight - scaledHeight;
+
+            const maximumPanY = 0;
+
+            this.panY = Math.max(
+                minimumPanY,
+                Math.min(maximumPanY, this.panY)
+            );
+        }
+    }
+
 }
