@@ -82,6 +82,13 @@ class Board {
         const exportMenuItem = document.createElement("button");
         exportMenuItem.textContent = "Export";
 
+        exportMenuItem.addEventListener(
+            "click",
+            () => {
+                this.exportWorkflow();
+            }
+        );
+
         const importMenuItem = document.createElement("button");
         importMenuItem.textContent = "Import";
 
@@ -97,6 +104,29 @@ class Board {
         importInput.type = "file";
         importInput.accept = ".json,application/json";
         importInput.hidden = true;
+
+        importMenuItem.addEventListener(
+            "click",
+            () => {
+                importInput.click();
+            }
+        );
+
+        importInput.addEventListener(
+            "change",
+            (event) => {
+                const selectedFile =
+                    event.target.files[0];
+
+                if (selectedFile) {
+                    this.importWorkflow(
+                        selectedFile
+                    );
+                }
+
+                event.target.value = "";
+            }
+        );
 
         const editButton = document.createElement("button");
         editButton.textContent = "Edit";
@@ -1429,6 +1459,223 @@ class Board {
                 Math.min(maximumPanY, this.panY)
             );
         }
+    }
+
+    getWorkflowData() {
+        return {
+            version: 1,
+
+            zoom: this.zoom,
+            panX: this.panX,
+            panY: this.panY,
+
+            leftPanelWidth:
+                this.leftPanelWidth,
+
+            rightPanelWidth:
+                this.rightPanelWidth,
+
+            widgets: this.widgets.map(
+                (widget) => {
+                    return widget.toJSON();
+                }
+            )
+        };
+    }
+
+    exportWorkflow() {
+        const workflowData =
+            this.getWorkflowData();
+
+        const jsonText = JSON.stringify(
+            workflowData,
+            null,
+            2
+        );
+
+        const fileBlob = new Blob(
+            [jsonText],
+            {
+                type: "application/json"
+            }
+        );
+
+        const downloadUrl =
+            URL.createObjectURL(fileBlob);
+
+        const downloadLink =
+            document.createElement("a");
+
+        downloadLink.href = downloadUrl;
+
+        downloadLink.download =
+            "workflow.json";
+
+        document.body.appendChild(
+            downloadLink
+        );
+
+        downloadLink.click();
+
+        downloadLink.remove();
+
+        URL.revokeObjectURL(
+            downloadUrl
+        );
+    }
+
+    importWorkflow(file) {
+        const reader = new FileReader();
+
+        reader.addEventListener(
+            "load",
+            () => {
+                try {
+                    const workflowData =
+                        JSON.parse(
+                            reader.result
+                        );
+
+                    if (
+                        !workflowData ||
+                        !Array.isArray(
+                            workflowData.widgets
+                        )
+                    ) {
+                        throw new Error(
+                            "Invalid workflow file"
+                        );
+                    }
+
+                    /*
+                    * Only warn if there is currently
+                    * something that could be lost.
+                    */
+                    if (
+                        this.widgets.length > 0
+                    ) {
+                        const confirmed =
+                            window.confirm(
+                                "Importing this workflow will replace your current workflow. Continue?"
+                            );
+
+                        if (!confirmed) {
+                            return;
+                        }
+                    }
+
+                    this.applyWorkflowData(
+                        workflowData
+                    );
+                } catch (error) {
+                    console.error(error);
+
+                    window.alert(
+                        "This is not a valid workflow JSON file."
+                    );
+                }
+            }
+        );
+
+        reader.readAsText(file);
+    }
+
+    applyWorkflowData(workflowData) {
+        this.clearWorkflow();
+
+        workflowData.widgets.forEach(
+            (widgetData) => {
+                if (
+                    typeof widgetData.x !== "number" ||
+                    typeof widgetData.y !== "number"
+                ) {
+                    throw new Error(
+                        "Invalid widget coordinates"
+                    );
+                }
+
+                const widget = new Widget(
+                    this,
+                    String(widgetData.id),
+                    String(widgetData.title),
+                    String(
+                        widgetData.type ||
+                        "Process"
+                    ),
+                    widgetData.x,
+                    widgetData.y
+                );
+
+                this.addWidget(widget);
+            }
+        );
+
+        if (
+            typeof workflowData.zoom ===
+            "number"
+        ) {
+            this.zoom =
+                workflowData.zoom;
+        }
+
+        if (
+            typeof workflowData.panX ===
+            "number"
+        ) {
+            this.panX =
+                workflowData.panX;
+        }
+
+        if (
+            typeof workflowData.panY ===
+            "number"
+        ) {
+            this.panY =
+                workflowData.panY;
+        }
+
+        if (
+            typeof workflowData.leftPanelWidth ===
+            "number"
+        ) {
+            this.leftPanelWidth =
+                workflowData.leftPanelWidth;
+        }
+
+        if (
+            typeof workflowData.rightPanelWidth ===
+            "number"
+        ) {
+            this.rightPanelWidth =
+                workflowData.rightPanelWidth;
+        }
+
+        /*
+        * Avoid duplicate widget IDs after importing.
+        */
+        const widgetNumbers =
+            this.widgets
+                .map((widget) => {
+                    const match =
+                        widget.id.match(
+                            /^widget-(\d+)$/
+                        );
+
+                    return match
+                        ? Number(match[1])
+                        : 0;
+                });
+
+        this.nextWidgetNumber =
+            Math.max(
+                0,
+                ...widgetNumbers
+            ) + 1;
+
+        this.applyPanelWidths();
+        this.updateWorkspaceTransform();
+        this.updateStats();
+        this.updateWorkflowMap();
     }
 
 }
