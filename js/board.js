@@ -792,6 +792,7 @@ class Board {
     resetView() {
         this.centerWorkspace();
         this.updateStats();
+        this.scheduleSave();
     }
 
     createNewWorkflow() {
@@ -1477,69 +1478,6 @@ class Board {
         }
     }
 
-    getWorkflowData() {
-        return {
-            version: 1,
-
-            zoom: this.zoom,
-            panX: this.panX,
-            panY: this.panY,
-
-            leftPanelWidth:
-                this.leftPanelWidth,
-
-            rightPanelWidth:
-                this.rightPanelWidth,
-
-            widgets: this.widgets.map(
-                (widget) => {
-                    return widget.toJSON();
-                }
-            )
-        };
-    }
-
-    exportWorkflow() {
-        const workflowData =
-            this.getWorkflowData();
-
-        const jsonText = JSON.stringify(
-            workflowData,
-            null,
-            2
-        );
-
-        const fileBlob = new Blob(
-            [jsonText],
-            {
-                type: "application/json"
-            }
-        );
-
-        const downloadUrl =
-            URL.createObjectURL(fileBlob);
-
-        const downloadLink =
-            document.createElement("a");
-
-        downloadLink.href = downloadUrl;
-
-        downloadLink.download =
-            "workflow.json";
-
-        document.body.appendChild(
-            downloadLink
-        );
-
-        downloadLink.click();
-
-        downloadLink.remove();
-
-        URL.revokeObjectURL(
-            downloadUrl
-        );
-    }
-
     importWorkflow(file) {
         const reader = new FileReader();
 
@@ -1772,6 +1710,15 @@ class Board {
             workspaceHeight:
                 this.workspaceHeight,
 
+            zoom:
+                this.zoom,
+
+            panX:
+                this.panX,
+
+            panY:
+                this.panY,
+
             leftPanelWidth:
                 this.leftPanelWidth,
 
@@ -1831,5 +1778,91 @@ class Board {
             downloadUrl
         );
     }
+
+    hideContextMenu() {
+        if (this.contextMenu) {
+            this.contextMenu.remove();
+
+            this.contextMenu = null;
+        }
+    }
+
+    showWidgetContextMenu(
+        widget,
+        clientX,
+        clientY
+    ) {
+        this.hideContextMenu();
+
+        this.selectWidget(widget);
+
+        const menu =
+            document.createElement("div");
+
+        menu.className =
+            "widget-context-menu";
+
+        menu.style.left =
+            `${clientX}px`;
+
+        menu.style.top =
+            `${clientY}px`;
+
+        const propertiesButton =
+            document.createElement("button");
+
+        propertiesButton.textContent =
+            "Properties";
+
+        const deleteButton =
+            document.createElement("button");
+
+        deleteButton.textContent =
+            "Delete";
+
+        propertiesButton.addEventListener(
+            "click",
+            () => {
+                this.openWidgetProperties(
+                    widget
+                );
+
+                this.hideContextMenu();
+            }
+        );
+
+        deleteButton.addEventListener(
+            "click",
+            () => {
+                const confirmed =
+                    window.confirm(
+                        `Delete "${widget.title}"?`
+                    );
+
+                if (confirmed) {
+                    this.removeWidget(
+                        widget
+                    );
+                }
+
+                this.hideContextMenu();
+            }
+        );
+
+        menu.appendChild(
+            propertiesButton
+        );
+
+        menu.appendChild(
+            deleteButton
+        );
+
+        document.body.appendChild(
+            menu
+        );
+
+        this.contextMenu = menu;
+    }
+
 
 }

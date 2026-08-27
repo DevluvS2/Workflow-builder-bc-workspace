@@ -79,6 +79,22 @@ class Widget {
                 this.board.selectWidget(this);
             }
         );
+
+        this.element.addEventListener(
+            "contextmenu",
+            (event) => {
+                event.preventDefault();
+
+                event.stopPropagation();
+
+                this.board.showWidgetContextMenu(
+                    this,
+                    event.clientX,
+                    event.clientY
+                );
+            }
+        );
+
     }
 
     startDragging(event) {

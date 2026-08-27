@@ -14,8 +14,8 @@ if (!restored) {
             "widget-1",
             "Start",
             "Start",
-            120,
-            120
+            2700,
+            1900
         );
 
     const processWidget =
@@ -24,8 +24,8 @@ if (!restored) {
             "widget-2",
             "Process Request",
             "Process",
-            380,
-            220
+            3000,
+            1900
         );
 
     const endWidget =
@@ -34,8 +34,8 @@ if (!restored) {
             "widget-3",
             "Finish",
             "End",
-            650,
-            350
+            3300,
+            1900
         );
 
     board.addWidget(startWidget);
@@ -43,6 +43,9 @@ if (!restored) {
     board.addWidget(endWidget);
 
     board.nextWidgetNumber = 4;
+
+    board.centerWorkspace();
+    board.saveState();
 
     board.saveState();
 }
