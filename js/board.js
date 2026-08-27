@@ -982,12 +982,42 @@ class Board {
         this.scheduleSave();
     }
 
-    bringWidgetToFront(widget) {
+    bringWidgetToFront(
+        widget,
+        recordHistory = false
+    ) {
         if (
             !widget ||
             !widget.element
         ) {
             return;
+        }
+
+        const highestZIndex =
+            this.widgets.reduce(
+                (highest, currentWidget) =>
+                    Math.max(
+                        highest,
+                        this.getWidgetZIndex(
+                            currentWidget
+                        )
+                    ),
+                2
+            );
+
+        /*
+         * If it is already the top-most widget,
+         * there is nothing to reorder.
+         */
+        if (
+            this.getWidgetZIndex(widget) >=
+            highestZIndex
+        ) {
+            return;
+        }
+
+        if (recordHistory) {
+            this.recordHistoryState();
         }
 
         widget.zIndex =
@@ -999,6 +1029,68 @@ class Board {
             String(widget.zIndex);
 
         this.updateWidgetPeek();
+        this.updateConnectionPeek();
+
+        this.scheduleSave();
+    }
+
+    sendWidgetToBack(
+        widget,
+        recordHistory = true
+    ) {
+        if (
+            !widget ||
+            !widget.element ||
+            !this.widgets.includes(widget)
+        ) {
+            return;
+        }
+
+        const orderedWidgets =
+            [...this.widgets].sort(
+                (widgetA, widgetB) =>
+                    this.getWidgetZIndex(widgetA) -
+                    this.getWidgetZIndex(widgetB)
+            );
+
+        if (
+            orderedWidgets[0] ===
+            widget
+        ) {
+            return;
+        }
+
+        if (recordHistory) {
+            this.recordHistoryState();
+        }
+
+        const reorderedWidgets = [
+            widget,
+            ...orderedWidgets.filter(
+                (currentWidget) =>
+                    currentWidget !== widget
+            )
+        ];
+
+        reorderedWidgets.forEach(
+            (currentWidget, index) => {
+                currentWidget.zIndex =
+                    3 + index;
+
+                if (currentWidget.element) {
+                    currentWidget.element.style.zIndex =
+                        String(
+                            currentWidget.zIndex
+                        );
+                }
+            }
+        );
+
+        this.nextWidgetZIndex =
+            3 + reorderedWidgets.length;
+
+        this.updateWidgetPeek();
+        this.updateConnectionPeek();
 
         this.scheduleSave();
     }
@@ -3882,6 +3974,265 @@ class Board {
         }
     }
 
+    createContextMenuButton(
+        label,
+        action,
+        options = {}
+    ) {
+        const button =
+            document.createElement("button");
+
+        button.type = "button";
+        button.textContent = label;
+
+        if (options.danger) {
+            button.classList.add(
+                "context-menu-danger"
+            );
+        }
+
+        if (options.disabled) {
+            button.disabled = true;
+        }
+
+        if (options.title) {
+            button.title = options.title;
+        }
+
+        button.addEventListener(
+            "click",
+            () => {
+                if (button.disabled) {
+                    return;
+                }
+
+                this.hideContextMenu();
+
+                action();
+            }
+        );
+
+        return button;
+    }
+
+    createContextMenuDivider() {
+        const divider =
+            document.createElement("div");
+
+        divider.className =
+            "context-menu-divider";
+
+        return divider;
+    }
+
+    positionContextMenu(
+        menu,
+        clientX,
+        clientY
+    ) {
+        const edgePadding = 8;
+
+        const menuRect =
+            menu.getBoundingClientRect();
+
+        const maximumLeft =
+            Math.max(
+                edgePadding,
+                window.innerWidth -
+                    menuRect.width -
+                    edgePadding
+            );
+
+        const maximumTop =
+            Math.max(
+                edgePadding,
+                window.innerHeight -
+                    menuRect.height -
+                    edgePadding
+            );
+
+        const left =
+            Math.max(
+                edgePadding,
+                Math.min(
+                    clientX,
+                    maximumLeft
+                )
+            );
+
+        const top =
+            Math.max(
+                edgePadding,
+                Math.min(
+                    clientY,
+                    maximumTop
+                )
+            );
+
+        menu.style.left =
+            `${left}px`;
+
+        menu.style.top =
+            `${top}px`;
+    }
+
+    renameWidget(widget) {
+        if (
+            !widget ||
+            !this.widgets.includes(widget)
+        ) {
+            return;
+        }
+
+        const enteredTitle =
+            window.prompt(
+                "Rename widget:",
+                widget.title
+            );
+
+        if (enteredTitle === null) {
+            return;
+        }
+
+        const nextTitle =
+            enteredTitle.trim();
+
+        if (
+            nextTitle === "" ||
+            nextTitle === widget.title
+        ) {
+            return;
+        }
+
+        this.recordHistoryState();
+
+        widget.setTitle(
+            nextTitle
+        );
+
+        if (
+            this.selectedWidget ===
+            widget
+        ) {
+            this.showWidgetProperties(
+                widget
+            );
+        }
+
+        this.updateStats();
+    }
+
+    duplicateWidget(widget) {
+        if (
+            !widget ||
+            !this.widgets.includes(widget)
+        ) {
+            return null;
+        }
+
+        this.recordHistoryState();
+
+        const id =
+            `widget-${this.nextWidgetNumber}`;
+
+        this.nextWidgetNumber += 1;
+
+        const duplicateOffset = 30;
+
+        const duplicateX =
+            Math.max(
+                0,
+                Math.min(
+                    this.workspaceWidth - 170,
+                    widget.x +
+                        duplicateOffset
+                )
+            );
+
+        const duplicateY =
+            Math.max(
+                0,
+                Math.min(
+                    this.workspaceHeight - 90,
+                    widget.y +
+                        duplicateOffset
+                )
+            );
+
+        const duplicate =
+            new Widget(
+                this,
+                id,
+                `${widget.title} Copy`,
+                widget.type,
+                duplicateX,
+                duplicateY
+            );
+
+        this.addWidget(
+            duplicate
+        );
+
+        this.selectWidget(
+            duplicate
+        );
+
+        return duplicate;
+    }
+
+    disconnectAllConnections(widget) {
+        if (
+            !widget ||
+            !this.widgets.includes(widget)
+        ) {
+            return;
+        }
+
+        const attachedConnections =
+            this.connections.filter(
+                (connection) =>
+                    connection.sourceWidget ===
+                        widget ||
+                    connection.targetWidget ===
+                        widget
+            );
+
+        if (
+            attachedConnections.length === 0
+        ) {
+            return;
+        }
+
+        const connectionWord =
+            attachedConnections.length === 1
+                ? "connection"
+                : "connections";
+
+        const confirmed =
+            window.confirm(
+                `Disconnect all ${attachedConnections.length} ${connectionWord} from "${widget.title}"?`
+            );
+
+        if (!confirmed) {
+            return;
+        }
+
+        this.recordHistoryState();
+
+        attachedConnections.forEach(
+            (connection) => {
+                this.removeConnection(
+                    connection,
+                    false
+                );
+            }
+        );
+
+        this.selectWidget(widget);
+        this.updateWorkflowMap();
+        this.scheduleSave();
+    }
+
     showWidgetContextMenu(
         widget,
         clientX,
@@ -3895,61 +4246,160 @@ class Board {
             document.createElement("div");
 
         menu.className =
-            "widget-context-menu";
+            "widget-context-menu enhanced-context-menu";
 
-        menu.style.left =
-            `${clientX}px`;
+        const attachedConnectionCount =
+            this.connections.filter(
+                (connection) =>
+                    connection.sourceWidget ===
+                        widget ||
+                    connection.targetWidget ===
+                        widget
+            ).length;
 
-        menu.style.top =
-            `${clientY}px`;
+        const highestZIndex =
+            this.widgets.reduce(
+                (highest, currentWidget) =>
+                    Math.max(
+                        highest,
+                        this.getWidgetZIndex(
+                            currentWidget
+                        )
+                    ),
+                2
+            );
 
-        const propertiesButton =
-            document.createElement("button");
+        const lowestZIndex =
+            this.widgets.reduce(
+                (lowest, currentWidget) =>
+                    Math.min(
+                        lowest,
+                        this.getWidgetZIndex(
+                            currentWidget
+                        )
+                    ),
+                Number.POSITIVE_INFINITY
+            );
 
-        propertiesButton.textContent =
-            "Properties";
-
-        const deleteButton =
-            document.createElement("button");
-
-        deleteButton.textContent =
-            "Delete";
-
-        propertiesButton.addEventListener(
-            "click",
-            () => {
-                this.openWidgetProperties(
-                    widget
-                );
-
-                this.hideContextMenu();
-            }
-        );
-
-        deleteButton.addEventListener(
-            "click",
-            () => {
-                const confirmed =
-                    window.confirm(
-                        `Delete "${widget.title}"?`
-                    );
-
-                if (confirmed) {
-                    this.removeWidget(
+        menu.appendChild(
+            this.createContextMenuButton(
+                "Properties",
+                () => {
+                    this.openWidgetProperties(
                         widget
                     );
                 }
-
-                this.hideContextMenu();
-            }
+            )
         );
 
         menu.appendChild(
-            propertiesButton
+            this.createContextMenuButton(
+                "Rename",
+                () => {
+                    this.renameWidget(
+                        widget
+                    );
+                }
+            )
         );
 
         menu.appendChild(
-            deleteButton
+            this.createContextMenuButton(
+                "Duplicate",
+                () => {
+                    this.duplicateWidget(
+                        widget
+                    );
+                }
+            )
+        );
+
+        menu.appendChild(
+            this.createContextMenuDivider()
+        );
+
+        menu.appendChild(
+            this.createContextMenuButton(
+                "Bring to Front",
+                () => {
+                    this.bringWidgetToFront(
+                        widget,
+                        true
+                    );
+                },
+                {
+                    disabled:
+                        this.getWidgetZIndex(widget) >=
+                        highestZIndex,
+                    title:
+                        "Place this widget above all other widgets"
+                }
+            )
+        );
+
+        menu.appendChild(
+            this.createContextMenuButton(
+                "Send to Back",
+                () => {
+                    this.sendWidgetToBack(
+                        widget,
+                        true
+                    );
+                },
+                {
+                    disabled:
+                        this.getWidgetZIndex(widget) <=
+                        lowestZIndex,
+                    title:
+                        "Place this widget behind all other widgets"
+                }
+            )
+        );
+
+        menu.appendChild(
+            this.createContextMenuButton(
+                attachedConnectionCount > 0
+                    ? `Disconnect All (${attachedConnectionCount})`
+                    : "Disconnect All",
+                () => {
+                    this.disconnectAllConnections(
+                        widget
+                    );
+                },
+                {
+                    disabled:
+                        attachedConnectionCount === 0,
+                    title:
+                        attachedConnectionCount === 0
+                            ? "This widget has no connections"
+                            : "Remove every connection attached to this widget"
+                }
+            )
+        );
+
+        menu.appendChild(
+            this.createContextMenuDivider()
+        );
+
+        menu.appendChild(
+            this.createContextMenuButton(
+                "Delete",
+                () => {
+                    const confirmed =
+                        window.confirm(
+                            `Delete "${widget.title}"?`
+                        );
+
+                    if (confirmed) {
+                        this.removeWidget(
+                            widget
+                        );
+                    }
+                },
+                {
+                    danger: true
+                }
+            )
         );
 
         document.body.appendChild(
@@ -3957,6 +4407,12 @@ class Board {
         );
 
         this.contextMenu = menu;
+
+        this.positionContextMenu(
+            menu,
+            clientX,
+            clientY
+        );
     }
 
     showConnectionContextMenu(
@@ -3970,57 +4426,89 @@ class Board {
             connection
         );
 
-
         const menu =
             document.createElement("div");
 
         menu.className =
-            "widget-context-menu";
-
-        menu.style.left =
-            `${clientX}px`;
-
-        menu.style.top =
-            `${clientY}px`;
-
-
-        const deleteButton =
-            document.createElement("button");
-
-        deleteButton.textContent =
-            "Delete Connection";
-
-
-        deleteButton.addEventListener(
-            "click",
-            () => {
-                const confirmed =
-                    window.confirm(
-                        `Delete connection from "${connection.sourceWidget.title}" to "${connection.targetWidget.title}"?`
-                    );
-
-                if (confirmed) {
-                    this.removeConnection(
-                        connection
-                    );
-                }
-
-                this.hideContextMenu();
-            }
-        );
-
+            "widget-context-menu enhanced-context-menu";
 
         menu.appendChild(
-            deleteButton
+            this.createContextMenuButton(
+                "Properties",
+                () => {
+                    this.selectConnection(
+                        connection
+                    );
+
+                    if (
+                        !this.rightPanelVisible
+                    ) {
+                        this.togglePanel(
+                            "right"
+                        );
+                    }
+                }
+            )
         );
 
+        menu.appendChild(
+            this.createContextMenuButton(
+                "Select Source Widget",
+                () => {
+                    this.selectWidget(
+                        connection.sourceWidget
+                    );
+                }
+            )
+        );
+
+        menu.appendChild(
+            this.createContextMenuButton(
+                "Select Target Widget",
+                () => {
+                    this.selectWidget(
+                        connection.targetWidget
+                    );
+                }
+            )
+        );
+
+        menu.appendChild(
+            this.createContextMenuDivider()
+        );
+
+        menu.appendChild(
+            this.createContextMenuButton(
+                "Delete Connection",
+                () => {
+                    const confirmed =
+                        window.confirm(
+                            `Delete connection from "${connection.sourceWidget.title}" to "${connection.targetWidget.title}"?`
+                        );
+
+                    if (confirmed) {
+                        this.removeConnection(
+                            connection
+                        );
+                    }
+                },
+                {
+                    danger: true
+                }
+            )
+        );
 
         document.body.appendChild(
             menu
         );
 
-        this.contextMenu =
-            menu;
+        this.contextMenu = menu;
+
+        this.positionContextMenu(
+            menu,
+            clientX,
+            clientY
+        );
     }
 
     openWidgetProperties(widget) {
