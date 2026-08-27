@@ -182,6 +182,55 @@ button {
     background-color: #f8fafc;
 }
 
+/* Overlap Peek Mode */
+
+.widget {
+    transition:
+        opacity 120ms ease,
+        filter 120ms ease,
+        box-shadow 120ms ease;
+}
+
+.widget.peek-covering {
+    opacity: 0.18;
+
+    filter:
+        saturate(0.55);
+
+    pointer-events: none;
+}
+
+.widget.peek-revealed {
+    box-shadow:
+        0 0 0 2px
+        rgb(37 99 235 / 18%);
+}
+
+.overlap-peek-outline {
+    position: absolute;
+
+    box-sizing: border-box;
+
+    /*
+     * Much lighter + thinner than before.
+     */
+    border:
+        1px dashed
+        rgb(37 99 235 / 30%);
+
+    border-radius: 5px;
+
+    /*
+     * Extremely subtle overlap shading.
+     */
+    background:
+        rgb(37 99 235 / 1.5%);
+
+    pointer-events: none;
+
+    z-index: 100000;
+}
+
 .property-row {
     margin-bottom: 12px;
 }

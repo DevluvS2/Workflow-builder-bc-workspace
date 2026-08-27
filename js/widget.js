@@ -151,6 +151,9 @@ class Widget {
             (event) => {
                 event.stopPropagation();
                 this.board.selectWidget(this);
+                this.board.pinWidgetPeek(
+                    this
+                );
             }
         );
 
@@ -176,6 +179,24 @@ class Widget {
                 event.stopPropagation();
 
                 this.board.openWidgetProperties(this);
+            }
+        );
+
+        this.element.addEventListener(
+            "pointerenter",
+            () => {
+                this.board.startWidgetPeek(
+                    this
+                );
+            }
+        );
+
+        this.element.addEventListener(
+            "pointerleave",
+            () => {
+                this.board.stopWidgetPeek(
+                    this
+                );
             }
         );
 
@@ -272,6 +293,8 @@ class Widget {
         this.board.updateConnectionsForWidget(
             this
         );
+
+        this.board.updateWidgetPeek();
 
         this.board.updateWorkflowMap();
     }

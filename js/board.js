@@ -7,6 +7,11 @@ class Board {
 
         this.nextWidgetZIndex = 3;
 
+        this.hoverPeekWidget = null;
+        this.pinnedPeekWidget = null;
+
+        this.peekOutlineElements = [];
+
         this.connections = [];
         this.nextConnectionNumber = 1;
 
@@ -479,6 +484,8 @@ class Board {
                         event.target === workspace
                     )
                 ) {
+                    this.clearPinnedWidgetPeek();
+
                     this.selectWidget(null);
                 }
             }
@@ -663,6 +670,22 @@ class Board {
             widget.element.remove();
         }
 
+        if (
+            this.hoverPeekWidget ===
+            widget
+        ) {
+            this.hoverPeekWidget =
+                null;
+        }
+
+        if (
+            this.pinnedPeekWidget ===
+            widget
+        ) {
+            this.pinnedPeekWidget =
+                null;
+        }
+
         this.widgets.splice(widgetIndex, 1);
 
         if (this.selectedWidget === widget) {
@@ -670,6 +693,7 @@ class Board {
             this.showNoSelectionMessage();
         }
 
+        this.updateWidgetPeek();
         this.updateStats();
         this.updateWorkflowMap();
         this.scheduleSave();
@@ -690,6 +714,8 @@ class Board {
 
         widget.element.style.zIndex =
             String(widget.zIndex);
+
+        this.updateWidgetPeek();
 
         this.scheduleSave();
     }
@@ -862,6 +888,201 @@ class Board {
             );
     }
 
+    clearWidgetPeekVisuals() {
+        this.widgets.forEach(
+            (widget) => {
+                if (!widget.element) {
+                    return;
+                }
+
+                widget.element.classList.remove(
+                    "peek-covering",
+                    "peek-revealed"
+                );
+            }
+        );
+
+        this.peekOutlineElements.forEach(
+            (element) => {
+                element.remove();
+            }
+        );
+
+        this.peekOutlineElements = [];
+    }
+
+    updateWidgetPeek() {
+        this.clearWidgetPeekVisuals();
+
+        /*
+        * A clicked/pinned widget takes priority
+        * over a temporary hover.
+        */
+        const peekWidget =
+            this.pinnedPeekWidget ||
+            this.hoverPeekWidget;
+
+        if (
+            !peekWidget ||
+            !this.widgets.includes(peekWidget) ||
+            !peekWidget.element
+        ) {
+            return;
+        }
+
+        const coveringWidgets =
+            this.getCoveringWidgets(
+                peekWidget
+            );
+
+        if (
+            coveringWidgets.length === 0
+        ) {
+            return;
+        }
+
+
+        /*
+        * Emphasize the widget the user
+        * is trying to look at.
+        */
+        peekWidget.element.classList.add(
+            "peek-revealed"
+        );
+
+
+        coveringWidgets.forEach(
+            (overlapInfo) => {
+                const coveringWidget =
+                    overlapInfo.widget;
+
+                const overlap =
+                    overlapInfo.overlap;
+
+
+                /*
+                * Fade the widget sitting above.
+                */
+                if (coveringWidget.element) {
+                    coveringWidget.element
+                        .classList.add(
+                            "peek-covering"
+                        );
+                }
+
+
+                /*
+                * Draw an outline showing the
+                * exact region where they overlap.
+                */
+                if (overlap) {
+                    const outline =
+                        document.createElement(
+                            "div"
+                        );
+
+                    outline.className =
+                        "overlap-peek-outline";
+
+                    outline.style.left =
+                        `${overlap.left}px`;
+
+                    outline.style.top =
+                        `${overlap.top}px`;
+
+                    outline.style.width =
+                        `${overlap.width}px`;
+
+                    outline.style.height =
+                        `${overlap.height}px`;
+
+                    this.workspace.appendChild(
+                        outline
+                    );
+
+                    this.peekOutlineElements.push(
+                        outline
+                    );
+                }
+            }
+        );
+    }
+
+    startWidgetPeek(widget) {
+        if (!widget) {
+            return;
+        }
+
+        this.hoverPeekWidget =
+            widget;
+
+        this.updateWidgetPeek();
+    }
+
+    stopWidgetPeek(widget) {
+        if (
+            this.hoverPeekWidget !==
+            widget
+        ) {
+            return;
+        }
+
+        this.hoverPeekWidget =
+            null;
+
+        this.updateWidgetPeek();
+    }
+
+    pinWidgetPeek(widget) {
+        if (!widget) {
+            this.pinnedPeekWidget =
+                null;
+
+            this.updateWidgetPeek();
+
+            return;
+        }
+
+        const coveringWidgets =
+            this.getCoveringWidgets(
+                widget
+            );
+
+        /*
+        * Only pin Peek Mode when there
+        * is actually something covering
+        * this widget.
+        */
+        if (
+            coveringWidgets.length === 0
+        ) {
+            this.pinnedPeekWidget =
+                null;
+        } else {
+            this.pinnedPeekWidget =
+                widget;
+        }
+
+        this.updateWidgetPeek();
+    }
+
+    clearPinnedWidgetPeek() {
+        this.pinnedPeekWidget =
+            null;
+
+        this.updateWidgetPeek();
+    }
+
+    clearAllWidgetPeek() {
+        this.hoverPeekWidget =
+            null;
+
+        this.pinnedPeekWidget =
+            null;
+
+        this.clearWidgetPeekVisuals();
+    }
+
     getTopWidget(
         widgetA,
         widgetB
@@ -908,6 +1129,12 @@ class Board {
             );
 
         if (isTyping) {
+            return;
+        }
+
+        if (event.key === "Escape") {
+            this.clearPinnedWidgetPeek();
+
             return;
         }
 
@@ -1194,6 +1421,7 @@ class Board {
     }
 
     clearWorkflow() {
+        this.clearAllWidgetPeek();
         this.clearConnections();
         this.widgets.forEach((widget) => {
             if (widget.element) {
