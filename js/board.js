@@ -113,6 +113,9 @@ class Board {
         const menuBar = document.createElement("header");
         menuBar.className = "menu-bar";
 
+        /* =============================
+         * File menu
+         * ============================= */
         const fileMenu = document.createElement("div");
         fileMenu.className = "dropdown-menu";
 
@@ -153,7 +156,6 @@ class Board {
         fileMenu.appendChild(fileButton);
         fileMenu.appendChild(fileDropdown);
 
-
         const importInput = document.createElement("input");
         importInput.type = "file";
         importInput.accept = ".json,application/json";
@@ -188,35 +190,122 @@ class Board {
          */
         fileMenu.appendChild(importInput);
 
+
+        /* =============================
+         * Edit menu placeholder
+         * ============================= */
         const editButton = document.createElement("button");
         editButton.textContent = "Edit";
 
+
+        /* =============================
+         * View dropdown
+         * ============================= */
+        const viewMenu = document.createElement("div");
+        viewMenu.className = "dropdown-menu";
+
         const viewButton = document.createElement("button");
+        viewButton.className = "dropdown-button";
         viewButton.textContent = "View";
 
+        const viewDropdown = document.createElement("div");
+        viewDropdown.className =
+            "dropdown-content view-dropdown-content";
+
+        const leftPanelOption = document.createElement("label");
+        leftPanelOption.className = "dropdown-check-item";
+
+        const leftPanelCheckbox = document.createElement("input");
+        leftPanelCheckbox.type = "checkbox";
+        leftPanelCheckbox.checked = this.leftPanelVisible;
+        leftPanelCheckbox.setAttribute(
+            "aria-label",
+            "Show left panel"
+        );
+
+        const leftPanelText = document.createElement("span");
+        leftPanelText.textContent = "Left Panel";
+
+        leftPanelOption.appendChild(leftPanelCheckbox);
+        leftPanelOption.appendChild(leftPanelText);
+
+        const rightPanelOption = document.createElement("label");
+        rightPanelOption.className = "dropdown-check-item";
+
+        const rightPanelCheckbox = document.createElement("input");
+        rightPanelCheckbox.type = "checkbox";
+        rightPanelCheckbox.checked = this.rightPanelVisible;
+        rightPanelCheckbox.setAttribute(
+            "aria-label",
+            "Show right panel"
+        );
+
+        const rightPanelText = document.createElement("span");
+        rightPanelText.textContent = "Right Panel";
+
+        rightPanelOption.appendChild(rightPanelCheckbox);
+        rightPanelOption.appendChild(rightPanelText);
+
+        /*
+         * Save references so the checkmarks also update when
+         * a panel is hidden with its own Hide button or shown
+         * again from the edge of the workspace.
+         */
+        this.leftPanelViewCheckbox = leftPanelCheckbox;
+        this.rightPanelViewCheckbox = rightPanelCheckbox;
+
+        leftPanelCheckbox.addEventListener(
+            "change",
+            () => {
+                if (
+                    leftPanelCheckbox.checked !==
+                    this.leftPanelVisible
+                ) {
+                    this.togglePanel("left");
+                }
+            }
+        );
+
+        rightPanelCheckbox.addEventListener(
+            "change",
+            () => {
+                if (
+                    rightPanelCheckbox.checked !==
+                    this.rightPanelVisible
+                ) {
+                    this.togglePanel("right");
+                }
+            }
+        );
+
+        const viewDivider = document.createElement("div");
+        viewDivider.className = "dropdown-divider";
+
+        const resetViewMenuItem = document.createElement("button");
+        resetViewMenuItem.className = "reset-view-menu-item";
+        resetViewMenuItem.textContent = "Reset View";
+
+        resetViewMenuItem.addEventListener(
+            "click",
+            () => {
+                this.resetView();
+            }
+        );
+
+        viewDropdown.appendChild(leftPanelOption);
+        viewDropdown.appendChild(rightPanelOption);
+        viewDropdown.appendChild(viewDivider);
+        viewDropdown.appendChild(resetViewMenuItem);
+
+        viewMenu.appendChild(viewButton);
+        viewMenu.appendChild(viewDropdown);
+
+
+        /* =============================
+         * Help menu placeholder
+         * ============================= */
         const helpButton = document.createElement("button");
         helpButton.textContent = "Help";
-
-        const leftPanelButton = document.createElement("button");
-        leftPanelButton.textContent = "Toggle Left Panel";
-
-        const rightPanelButton = document.createElement("button");
-        rightPanelButton.textContent = "Toggle Right Panel";
-
-        leftPanelButton.addEventListener("click", () => {
-            this.togglePanel("left");
-        });
-
-        rightPanelButton.addEventListener("click", () => {
-            this.togglePanel("right");
-        });
-
-        const resetViewButton = document.createElement("button");
-        resetViewButton.textContent = "Reset View";
-
-        resetViewButton.addEventListener("click", () => {
-            this.resetView();
-        });
 
         const spacer = document.createElement("div");
         spacer.className = "menu-spacer";
@@ -229,11 +318,8 @@ class Board {
 
         menuBar.appendChild(fileMenu);
         menuBar.appendChild(editButton);
-        menuBar.appendChild(viewButton);
+        menuBar.appendChild(viewMenu);
         menuBar.appendChild(helpButton);
-        menuBar.appendChild(leftPanelButton);
-        menuBar.appendChild(rightPanelButton);
-        menuBar.appendChild(resetViewButton);
         menuBar.appendChild(spacer);
         menuBar.appendChild(zoomDisplay);
 
@@ -1873,6 +1959,18 @@ class Board {
         );
     }
 
+    syncViewMenuCheckboxes() {
+        if (this.leftPanelViewCheckbox) {
+            this.leftPanelViewCheckbox.checked =
+                this.leftPanelVisible;
+        }
+
+        if (this.rightPanelViewCheckbox) {
+            this.rightPanelViewCheckbox.checked =
+                this.rightPanelVisible;
+        }
+    }
+
     togglePanel(side) {
         if (side === "left") {
             this.leftPanelVisible = !this.leftPanelVisible;
@@ -1923,8 +2021,15 @@ class Board {
             );
         }
 
+        /*
+         * Keep View-menu checkboxes synchronized even when
+         * the user toggles a panel from its Hide/Show control.
+         */
+        this.syncViewMenuCheckboxes();
+
         this.scheduleSave();
     }
+
     handleWheel(event) {
         event.preventDefault();
 

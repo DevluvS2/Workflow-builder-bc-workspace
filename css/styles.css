@@ -869,3 +869,42 @@ button {
     pointer-events: none;
 }
 
+/* View dropdown controls */
+.view-dropdown-content {
+    min-width: 180px;
+}
+
+.dropdown-check-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 8px 12px;
+    color: white;
+    font-size: 14px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.dropdown-check-item:hover {
+    background-color: #374151;
+}
+
+.dropdown-check-item input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    accent-color: #60a5fa;
+    cursor: pointer;
+}
+
+.dropdown-divider {
+    height: 1px;
+    margin: 5px 0;
+    background-color: #475569;
+}
+
+.reset-view-menu-item {
+    font-weight: 600;
+}
+
