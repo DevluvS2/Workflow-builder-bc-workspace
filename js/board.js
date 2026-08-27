@@ -1762,4 +1762,74 @@ class Board {
         }
     }
 
+    getWorkflowData() {
+        return {
+            version: 1,
+
+            workspaceWidth:
+                this.workspaceWidth,
+
+            workspaceHeight:
+                this.workspaceHeight,
+
+            leftPanelWidth:
+                this.leftPanelWidth,
+
+            rightPanelWidth:
+                this.rightPanelWidth,
+
+            widgets: this.widgets.map(
+                (widget) => {
+                    return widget.toJSON();
+                }
+            )
+        };
+    }
+
+    exportWorkflow() {
+        const workflowData =
+            this.getWorkflowData();
+
+        const jsonText =
+            JSON.stringify(
+                workflowData,
+                null,
+                2
+            );
+
+        const fileBlob =
+            new Blob(
+                [jsonText],
+                {
+                    type: "application/json"
+                }
+            );
+
+        const downloadUrl =
+            URL.createObjectURL(
+                fileBlob
+            );
+
+        const downloadLink =
+            document.createElement("a");
+
+        downloadLink.href =
+            downloadUrl;
+
+        downloadLink.download =
+            "workflow.json";
+
+        document.body.appendChild(
+            downloadLink
+        );
+
+        downloadLink.click();
+
+        downloadLink.remove();
+
+        URL.revokeObjectURL(
+            downloadUrl
+        );
+    }
+
 }
