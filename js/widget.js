@@ -11,6 +11,9 @@ class Widget {
 
         this.element = null;
 
+        this.inputPortElement = null;
+        this.outputPortElement = null;
+
         this.isDragging = false;
         this.dragOffsetX = 0;
         this.dragOffsetY = 0;
@@ -30,12 +33,61 @@ class Widget {
         contentElement.className = "widget-content";
         contentElement.textContent = `Type: ${this.type}`;
 
+        const inputPort =
+            document.createElement("button");
+
+        inputPort.type = "button";
+        inputPort.className =
+            "widget-port input-port";
+
+        inputPort.title = "Input";
+        inputPort.setAttribute(
+            "aria-label",
+            `${this.title} input`
+        );
+
+
+        const outputPort =
+            document.createElement("button");
+
+        outputPort.type = "button";
+        outputPort.className =
+            "widget-port output-port";
+
+        outputPort.title = "Output";
+        outputPort.setAttribute(
+            "aria-label",
+            `${this.title} output`
+        );
+
         element.appendChild(titleElement);
         element.appendChild(contentElement);
-
+        element.appendChild(inputPort);
+        element.appendChild(outputPort);
         this.element = element;
         this.titleElement = titleElement;
         this.contentElement = contentElement;
+        
+        this.inputPortElement = inputPort;
+        this.outputPortElement = outputPort;
+
+        [inputPort, outputPort].forEach(
+            (port) => {
+                port.addEventListener(
+                    "pointerdown",
+                    (event) => {
+                        event.stopPropagation();
+                    }
+                );
+
+                port.addEventListener(
+                    "click",
+                    (event) => {
+                        event.stopPropagation();
+                    }
+                );
+            }
+        );
 
         this.updatePosition();
         this.addEventListeners();
@@ -92,6 +144,16 @@ class Widget {
                     event.clientX,
                     event.clientY
                 );
+            }
+        );
+
+        this.element.addEventListener(
+            "dblclick",
+            (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+
+                this.board.openWidgetProperties(this);
             }
         );
 

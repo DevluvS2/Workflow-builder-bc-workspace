@@ -270,7 +270,7 @@ button {
     position: absolute;
     width: 170px;
     min-height: 90px;
-    overflow: hidden;
+    overflow: visible;
 
     border: 1px solid #64748b;
     border-radius: 8px;
@@ -306,6 +306,47 @@ button {
     padding: 12px 10px;
     color: #475569;
     font-size: 14px;
+}
+
+/* Widget connection ports */
+
+.widget-port {
+    position: absolute;
+
+    top: 50%;
+
+    width: 14px;
+    height: 14px;
+
+    padding: 0;
+
+    border: 2px solid #475569;
+    border-radius: 50%;
+
+    background-color: white;
+
+    transform: translateY(-50%);
+
+    cursor: crosshair;
+
+    z-index: 5;
+}
+
+.widget-port:hover {
+    border-color: #2563eb;
+    background-color: #dbeafe;
+
+    transform:
+        translateY(-50%)
+        scale(1.2);
+}
+
+.input-port {
+    left: -8px;
+}
+
+.output-port {
+    right: -8px;
 }
 
 /* Workflow mini-map */
