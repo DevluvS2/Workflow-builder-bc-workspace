@@ -683,3 +683,111 @@ button {
         translateY(-50%)
         scale(1.35);
 }
+
+/*
+ * Invisible interaction area around
+ * each connection.
+ */
+.connection-hit-path {
+    fill: none;
+
+    stroke: transparent;
+    stroke-width: 16;
+
+    pointer-events: stroke;
+
+    cursor: pointer;
+}
+
+
+/*
+ * Make the actual thin line ignore
+ * pointer events. The hit path handles
+ * interaction instead.
+ */
+.workflow-connection {
+    pointer-events: none;
+
+    transition:
+        stroke 120ms ease,
+        stroke-width 120ms ease,
+        filter 120ms ease;
+}
+
+
+/*
+ * Highlight the connection currently
+ * being inspected.
+ */
+.workflow-connection.connection-peek-active {
+    stroke: #2563eb;
+
+    stroke-width: 4;
+
+    filter:
+        drop-shadow(
+            0 0 2px
+            rgb(37 99 235 / 35%)
+        );
+}
+
+
+/*
+ * Fade a widget that physically covers
+ * the connection being inspected.
+ */
+.widget.connection-peek-covering {
+    /*
+     * Do NOT fade the whole parent.
+     * Ports need to remain independently visible.
+     */
+    opacity: 1;
+
+    background-color:
+        rgb(255 255 255 / 12%);
+
+    border-color:
+        rgb(100 116 139 / 18%);
+
+    box-shadow:
+        inset 0 0 0 1px
+        rgb(100 116 139 / 15%);
+
+    pointer-events: none;
+}
+
+
+/*
+ * Fade the actual widget information,
+ * but leave its ports available for
+ * endpoint highlighting.
+ */
+.widget.connection-peek-covering .widget-title {
+    opacity: 0.12;
+
+    background-color:
+        rgb(226 232 240 / 12%);
+}
+
+.widget.connection-peek-covering .widget-content {
+    opacity: 0.12;
+}
+
+.widget-port.connection-peek-port {
+    opacity: 1;
+
+    border-color: #2563eb;
+    background-color: white;
+
+    box-shadow:
+        0 0 0 4px
+        rgb(37 99 235 / 18%),
+        0 0 8px
+        rgb(37 99 235 / 30%);
+
+    transform:
+        translateY(-50%)
+        scale(1.18);
+
+    z-index: 20;
+}

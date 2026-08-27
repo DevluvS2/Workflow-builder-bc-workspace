@@ -15,6 +15,9 @@ class Connection {
             targetWidget;
 
         this.element = null;
+
+        this.hitElement = null;
+        this.groupElement = null;
     }
 
 
@@ -22,6 +25,25 @@ class Connection {
         const svgNamespace =
             "http://www.w3.org/2000/svg";
 
+
+        /*
+        * Group the visible line and its
+        * invisible interaction path together.
+        */
+        const group =
+            document.createElementNS(
+                svgNamespace,
+                "g"
+            );
+
+        group.classList.add(
+            "workflow-connection-group"
+        );
+
+
+        /*
+        * Actual visible connection.
+        */
         const path =
             document.createElementNS(
                 svgNamespace,
@@ -40,13 +62,63 @@ class Connection {
         path.dataset.connectionId =
             this.id;
 
+
+        /*
+        * Invisible wider path.
+        *
+        * This makes the thin connection
+        * much easier to hover.
+        */
+        const hitPath =
+            document.createElementNS(
+                svgNamespace,
+                "path"
+            );
+
+        hitPath.classList.add(
+            "connection-hit-path"
+        );
+
+        hitPath.dataset.connectionId =
+            this.id;
+
+
+        /*
+        * Hovering the invisible hit path
+        * activates Connection Peek Mode.
+        */
+        hitPath.addEventListener(
+            "pointerenter",
+            () => {
+                this.board.startConnectionPeek(
+                    this
+                );
+            }
+        );
+
+        hitPath.addEventListener(
+            "pointerleave",
+            () => {
+                this.board.stopConnectionPeek(
+                    this
+                );
+            }
+        );
+
+
+        group.appendChild(path);
+        group.appendChild(hitPath);
+
+
         this.element = path;
+        this.hitElement = hitPath;
+        this.groupElement = group;
+
 
         this.update();
 
-        return path;
+        return group;
     }
-
 
     update() {
         if (
@@ -105,6 +177,13 @@ class Connection {
             "d",
             pathData
         );
+
+        if (this.hitElement) {
+            this.hitElement.setAttribute(
+                "d",
+                pathData
+            );
+        }
     }
 
 
@@ -467,11 +546,21 @@ class Connection {
 
 
     remove() {
-        if (this.element) {
-            this.element.remove();
+        if (this.groupElement) {
+            this.groupElement.remove();
+        } else {
+            if (this.element) {
+                this.element.remove();
+            }
+
+            if (this.hitElement) {
+                this.hitElement.remove();
+            }
         }
 
         this.element = null;
+        this.hitElement = null;
+        this.groupElement = null;
     }
 
 

@@ -12,6 +12,8 @@ class Board {
 
         this.peekOutlineElements = [];
 
+        this.hoverPeekConnections = [];
+
         this.connections = [];
         this.nextConnectionNumber = 1;
 
@@ -1113,6 +1115,340 @@ class Board {
         );
     }
 
+    connectionIntersectsWidget(
+        connection,
+        widget
+    ) {
+        if (
+            !connection ||
+            !connection.element ||
+            !widget ||
+            typeof widget.getBounds !==
+                "function"
+        ) {
+            return false;
+        }
+
+        const bounds =
+            widget.getBounds();
+
+        if (!bounds) {
+            return false;
+        }
+
+        const path =
+            connection.element;
+
+        let totalLength;
+
+        try {
+            totalLength =
+                path.getTotalLength();
+        } catch (error) {
+            return false;
+        }
+
+
+        /*
+        * Check the route very frequently so
+        * smaller overlaps aren't missed.
+        */
+        const sampleCount =
+            Math.max(
+                2,
+                Math.ceil(
+                    totalLength / 4
+                )
+            );
+
+
+        /*
+        * A small tolerance catches lines that
+        * pass extremely close to a widget edge.
+        */
+        const padding = 6;
+
+
+        /*
+        * Ignore a short distance immediately
+        * beside the source/output and target/input.
+        *
+        * Otherwise every connection would count
+        * as "covering" its source and target simply
+        * because it touches their ports.
+        */
+        const endpointIgnoreDistance = 24;
+
+
+        for (
+            let i = 0;
+            i <= sampleCount;
+            i += 1
+        ) {
+            const distance =
+                (
+                    totalLength *
+                    i
+                ) /
+                sampleCount;
+
+
+            /*
+            * Ignore the normal connection exit
+            * from its source widget.
+            */
+            if (
+                widget ===
+                    connection.sourceWidget &&
+                distance <
+                    endpointIgnoreDistance
+            ) {
+                continue;
+            }
+
+
+            /*
+            * Ignore the normal final approach
+            * into the target widget.
+            */
+            if (
+                widget ===
+                    connection.targetWidget &&
+                totalLength - distance <
+                    endpointIgnoreDistance
+            ) {
+                continue;
+            }
+
+
+            const point =
+                path.getPointAtLength(
+                    distance
+                );
+
+
+            if (
+                point.x >=
+                    bounds.left -
+                        padding &&
+                point.x <=
+                    bounds.right +
+                        padding &&
+                point.y >=
+                    bounds.top -
+                        padding &&
+                point.y <=
+                    bounds.bottom +
+                        padding
+            ) {
+                return true;
+            }
+        }
+
+
+        return false;
+    }
+
+    getWidgetsCoveringConnection(
+        connection
+    ) {
+        return this.widgets.filter(
+            (widget) => {
+                return (
+                    this.connectionIntersectsWidget(
+                        connection,
+                        widget
+                    )
+                );
+            }
+        );
+    }
+
+    clearConnectionPeekVisuals() {
+        this.widgets.forEach(
+            (widget) => {
+                if (widget.element) {
+                    widget.element
+                        .classList.remove(
+                            "connection-peek-covering"
+                        );
+                }
+            }
+        );
+
+
+        this.connections.forEach(
+            (connection) => {
+                if (connection.element) {
+                    connection.element
+                        .classList.remove(
+                            "connection-peek-active"
+                        );
+                }
+            }
+        );
+
+
+        /*
+        * STEP 3:
+        * Remove any old highlighted input/output ports.
+        */
+        document
+            .querySelectorAll(
+                ".connection-peek-port"
+            )
+            .forEach(
+                (port) => {
+                    port.classList.remove(
+                        "connection-peek-port"
+                    );
+                }
+            );
+    }
+
+    updateConnectionPeek() {
+        this.clearConnectionPeekVisuals();
+
+
+        if (
+            this.hoverPeekConnections
+                .length === 0
+        ) {
+            return;
+        }
+
+
+        this.hoverPeekConnections.forEach(
+            (connection) => {
+
+                if (!connection.element) {
+                    return;
+                }
+
+
+                /*
+                * Make the connection itself
+                * visually prominent.
+                */
+                connection.element.classList.add(
+                    "connection-peek-active"
+                );
+
+
+                /*
+                * Find widgets obstructing
+                * this particular path.
+                */
+                const coveringWidgets =
+                    this.getWidgetsCoveringConnection(
+                        connection
+                    );
+
+
+                coveringWidgets.forEach(
+                    (widget) => {
+                        if (widget.element) {
+                            widget.element
+                                .classList.add(
+                                    "connection-peek-covering"
+                                );
+                        }
+                    }
+                );
+
+                /*
+                * Endpoint highlighting is only needed
+                * when some portion of this connection
+                * is actually obscured.
+                */
+                if (coveringWidgets.length > 0) {
+                    const sourcePort =
+                        connection.sourceWidget
+                            .outputPortElement;
+
+                    const targetPort =
+                        connection.targetWidget
+                            .inputPortElement;
+
+
+                    if (sourcePort) {
+                        sourcePort.classList.add(
+                            "connection-peek-port"
+                        );
+                    }
+
+
+                    if (targetPort) {
+                        targetPort.classList.add(
+                            "connection-peek-port"
+                        );
+                    }
+                }
+            }
+        );
+    }
+
+    startConnectionPeek(
+        connection
+    ) {
+        if (!connection) {
+            return;
+        }
+
+        this.hoverPeekConnections =
+            [connection];
+
+        this.updateConnectionPeek();
+    }
+
+    stopConnectionPeek(
+        connection
+    ) {
+        if (
+            !this.hoverPeekConnections
+                .includes(connection)
+        ) {
+            return;
+        }
+
+        this.hoverPeekConnections = [];
+
+        this.updateConnectionPeek();
+    }
+
+    startInputConnectionPeek(
+        widget
+    ) {
+        if (!widget) {
+            return;
+        }
+
+
+        const incomingConnections =
+            this.connections.filter(
+                (connection) => {
+                    return (
+                        connection.targetWidget ===
+                        widget
+                    );
+                }
+            );
+
+
+        this.hoverPeekConnections =
+            incomingConnections;
+
+        this.updateConnectionPeek();
+    }
+
+    stopInputConnectionPeek(
+        widget
+    ) {
+        this.hoverPeekConnections = [];
+
+        this.updateConnectionPeek();
+    }
+
     handleKeyDown(event) {
         /*
         * Do not delete widgets while the user is typing
@@ -1422,6 +1758,10 @@ class Board {
 
     clearWorkflow() {
         this.clearAllWidgetPeek();
+
+        this.hoverPeekConnections = [];
+        this.clearConnectionPeekVisuals();
+
         this.clearConnections();
         this.widgets.forEach((widget) => {
             if (widget.element) {
@@ -2947,6 +3287,14 @@ class Board {
         if (connectionIndex === -1) {
             return;
         }
+
+        this.hoverPeekConnections =
+            this.hoverPeekConnections.filter(
+                (currentConnection) =>
+                    currentConnection !==
+                    connection
+            );
+        this.updateConnectionPeek();
 
         connection.remove();
 

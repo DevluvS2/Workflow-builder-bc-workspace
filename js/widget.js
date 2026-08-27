@@ -111,6 +111,30 @@ class Widget {
             }
         );
 
+        inputPort.addEventListener(
+            "pointerenter",
+            (event) => {
+                event.stopPropagation();
+
+                this.board
+                    .startInputConnectionPeek(
+                        this
+                    );
+            }
+        );
+
+        inputPort.addEventListener(
+            "pointerleave",
+            (event) => {
+                event.stopPropagation();
+
+                this.board
+                    .stopInputConnectionPeek(
+                        this
+                    );
+            }
+        );
+
         this.updatePosition();
         this.addEventListeners();
 
@@ -295,6 +319,8 @@ class Widget {
         );
 
         this.board.updateWidgetPeek();
+
+        this.board.updateConnectionPeek();
 
         this.board.updateWorkflowMap();
     }
