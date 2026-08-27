@@ -5,6 +5,18 @@ class Board {
         this.widgets = [];
         this.selectedWidget = null;
 
+        this.connections = [];
+        this.nextConnectionNumber = 1;
+
+        this.connectionSourceWidget = null;
+        this.connectionPreviewElement = null;
+
+        this.connectionMoveHandler = null;
+        this.connectionEndHandler = null;
+        this.connectionCancelHandler = null;
+
+        this.contextMenu = null;
+
         this.leftPanelVisible = true;
         this.rightPanelVisible = true;
 
@@ -320,6 +332,36 @@ class Board {
         workspace.style.height =
             `${this.workspaceHeight}px`;
 
+        const svgNamespace =
+            "http://www.w3.org/2000/svg";
+
+        const connectionLayer =
+            document.createElementNS(
+                svgNamespace,
+                "svg"
+            );
+
+        connectionLayer.classList.add(
+            "connection-layer"
+        );
+
+        connectionLayer.setAttribute(
+            "width",
+            String(this.workspaceWidth)
+        );
+
+        connectionLayer.setAttribute(
+            "height",
+            String(this.workspaceHeight)
+        );
+
+        workspace.appendChild(
+            connectionLayer
+        );
+
+        this.connectionLayer =
+            connectionLayer;
+        
         const workflowMap = this.createWorkflowMap();
 
         workspaceContainer.appendChild(workspace);
@@ -509,6 +551,10 @@ class Board {
         if (widgetIndex === -1) {
             return;
         }
+
+        this.removeConnectionsForWidget(
+            widget
+        );
 
         if (widget.element) {
             widget.element.remove();
@@ -828,6 +874,7 @@ class Board {
     }
 
     clearWorkflow() {
+        this.clearConnections();
         this.widgets.forEach((widget) => {
             if (widget.element) {
                 widget.element.remove();
@@ -836,6 +883,17 @@ class Board {
 
         this.widgets = [];
         this.selectedWidget = null;
+
+        this.connections = [];
+
+        this.nextConnectionNumber = 1;
+
+        this.connectionSourceWidget = null;
+        this.connectionPreviewElement = null;
+
+        this.connectionMoveHandler = null;
+        this.connectionEndHandler = null;
+        this.connectionCancelHandler = null;
 
         this.showNoSelectionMessage();
         this.updateStats();
@@ -1882,6 +1940,482 @@ class Board {
         if (!this.rightPanelVisible) {
             this.togglePanel("right");
         }
+    }
+
+    startConnection(
+        sourceWidget,
+        event
+    ) {
+        if (event.button !== 0) {
+            return;
+        }
+
+        this.cancelConnectionDrag();
+
+        this.connectionSourceWidget =
+            sourceWidget;
+
+        const svgNamespace =
+            "http://www.w3.org/2000/svg";
+
+        const previewPath =
+            document.createElementNS(
+                svgNamespace,
+                "path"
+            );
+
+        previewPath.classList.add(
+            "workflow-connection",
+            "connection-preview"
+        );
+
+        this.connectionLayer.appendChild(
+            previewPath
+        );
+
+        this.connectionPreviewElement =
+            previewPath;
+
+        this.updateConnectionPreview(
+            event.clientX,
+            event.clientY
+        );
+
+        this.connectionMoveHandler =
+            (moveEvent) => {
+                this.updateConnectionPreview(
+                    moveEvent.clientX,
+                    moveEvent.clientY
+                );
+            };
+
+        this.connectionEndHandler =
+            (upEvent) => {
+                this.finishConnectionDrag(
+                    upEvent
+                );
+            };
+
+        this.connectionCancelHandler =
+            () => {
+                this.cancelConnectionDrag();
+            };
+
+        window.addEventListener(
+            "pointermove",
+            this.connectionMoveHandler
+        );
+
+        window.addEventListener(
+            "pointerup",
+            this.connectionEndHandler
+        );
+
+        window.addEventListener(
+            "pointercancel",
+            this.connectionCancelHandler
+        );
+    }
+
+    updateConnectionPreview(
+        clientX,
+        clientY
+    ) {
+        if (
+            !this.connectionSourceWidget ||
+            !this.connectionPreviewElement
+        ) {
+            return;
+        }
+
+        const sourcePoint =
+            this.connectionSourceWidget
+                .getOutputPortPosition();
+
+        /*
+        * See whether we're close enough
+        * to magnetically snap to an input.
+        */
+        const nearestInputPort =
+            this.findNearestInputPort(
+                clientX,
+                clientY,
+                this.connectionSourceWidget
+            );
+
+        let targetPoint;
+
+        if (nearestInputPort) {
+            const rect =
+                nearestInputPort
+                    .getBoundingClientRect();
+
+            targetPoint =
+                this.screenToWorkspace(
+                    rect.left +
+                        rect.width / 2,
+
+                    rect.top +
+                        rect.height / 2
+                );
+        } else {
+            targetPoint =
+                this.screenToWorkspace(
+                    clientX,
+                    clientY
+                );
+        }
+
+        const pathData =
+            Connection.createPath(
+                sourcePoint,
+                targetPoint
+            );
+
+        this.connectionPreviewElement
+            .setAttribute(
+                "d",
+                pathData
+            );
+
+
+        /*
+        * Remove the old highlight.
+        */
+        document
+            .querySelectorAll(
+                ".input-port.connection-target"
+            )
+            .forEach((port) => {
+                port.classList.remove(
+                    "connection-target"
+                );
+            });
+
+
+        /*
+        * Highlight the port we're
+        * magnetically snapping toward.
+        */
+        if (nearestInputPort) {
+            nearestInputPort.classList.add(
+                "connection-target"
+            );
+        }
+    }
+
+    getWidgetFromPort(portElement) {
+        if (!portElement) {
+            return null;
+        }
+
+        const widgetElement =
+            portElement.closest(".widget");
+
+        if (!widgetElement) {
+            return null;
+        }
+
+        const widgetId =
+            widgetElement.dataset.widgetId;
+
+        return (
+            this.widgets.find(
+                (widget) =>
+                    widget.id === widgetId
+            ) || null
+        );
+    }
+
+    findNearestInputPort(
+        clientX,
+        clientY,
+        sourceWidget,
+        maxDistance = 30
+    ) {
+        const inputPorts =
+            document.querySelectorAll(
+                ".input-port"
+            );
+
+        let nearestPort = null;
+        let nearestDistance =
+            maxDistance;
+
+        inputPorts.forEach(
+            (port) => {
+                const targetWidget =
+                    this.getWidgetFromPort(
+                        port
+                    );
+
+                /*
+                * Don't connect a widget
+                * to itself.
+                */
+                if (
+                    !targetWidget ||
+                    targetWidget ===
+                        sourceWidget
+                ) {
+                    return;
+                }
+
+                const rect =
+                    port.getBoundingClientRect();
+
+                const portX =
+                    rect.left +
+                    rect.width / 2;
+
+                const portY =
+                    rect.top +
+                    rect.height / 2;
+
+                const deltaX =
+                    clientX - portX;
+
+                const deltaY =
+                    clientY - portY;
+
+                const distance =
+                    Math.sqrt(
+                        deltaX * deltaX +
+                        deltaY * deltaY
+                    );
+
+                if (
+                    distance <
+                    nearestDistance
+                ) {
+                    nearestDistance =
+                        distance;
+
+                    nearestPort = port;
+                }
+            }
+        );
+
+        return nearestPort;
+    }
+
+    finishConnectionDrag(event) {
+        const sourceWidget =
+            this.connectionSourceWidget;
+
+        if (!sourceWidget) {
+            this.cancelConnectionDrag();
+            return;
+        }
+
+        try {
+            /*
+            * updateConnectionPreview() already found
+            * the nearest valid input and gave it the
+            * connection-target class.
+            *
+            * Use that exact port instead of trying
+            * to calculate the target again.
+            */
+            const inputPort =
+                document.querySelector(
+                    ".input-port.connection-target"
+                );
+
+            if (!inputPort) {
+                return;
+            }
+
+            const targetWidget =
+                this.getWidgetFromPort(
+                    inputPort
+                );
+
+            if (
+                !targetWidget ||
+                targetWidget === sourceWidget
+            ) {
+                return;
+            }
+
+            const alreadyConnected =
+                this.connections.some(
+                    (connection) => {
+                        return (
+                            connection.sourceWidget ===
+                                sourceWidget &&
+                            connection.targetWidget ===
+                                targetWidget
+                        );
+                    }
+                );
+
+            if (alreadyConnected) {
+                return;
+            }
+
+            this.addConnection(
+                sourceWidget,
+                targetWidget
+            );
+        } finally {
+            this.cancelConnectionDrag();
+        }
+    }
+
+    addConnection(
+        sourceWidget,
+        targetWidget
+    ) {
+        const id =
+            `connection-${this.nextConnectionNumber}`;
+
+        this.nextConnectionNumber += 1;
+
+        const connection =
+            new Connection(
+                this,
+                id,
+                sourceWidget,
+                targetWidget
+            );
+
+        const connectionElement =
+            connection.render();
+
+        this.connectionLayer.appendChild(
+            connectionElement
+        );
+
+        this.connections.push(
+            connection
+        );
+
+        return connection;
+    }
+
+    cancelConnectionDrag() {
+        if (
+            this.connectionPreviewElement
+        ) {
+            this.connectionPreviewElement.remove();
+        }
+
+        this.connectionPreviewElement =
+            null;
+
+        this.connectionSourceWidget =
+            null;
+
+        document
+            .querySelectorAll(
+                ".input-port.connection-target"
+            )
+            .forEach((port) => {
+                port.classList.remove(
+                    "connection-target"
+                );
+            });
+
+        if (this.connectionMoveHandler) {
+            window.removeEventListener(
+                "pointermove",
+                this.connectionMoveHandler
+            );
+        }
+
+        if (this.connectionEndHandler) {
+            window.removeEventListener(
+                "pointerup",
+                this.connectionEndHandler
+            );
+        }
+
+        if (
+            this.connectionCancelHandler
+        ) {
+            window.removeEventListener(
+                "pointercancel",
+                this.connectionCancelHandler
+            );
+        }
+
+        this.connectionMoveHandler = null;
+        this.connectionEndHandler = null;
+        this.connectionCancelHandler = null;
+    }
+
+    updateConnectionsForWidget(
+        widget
+    ) {
+        this.connections.forEach(
+            (connection) => {
+                if (
+                    connection.sourceWidget ===
+                        widget ||
+                    connection.targetWidget ===
+                        widget
+                ) {
+                    connection.update();
+                }
+            }
+        );
+    }
+
+    removeConnection(connection) {
+        const connectionIndex =
+            this.connections.indexOf(
+                connection
+            );
+
+        if (connectionIndex === -1) {
+            return;
+        }
+
+        connection.remove();
+
+        this.connections.splice(
+            connectionIndex,
+            1
+        );
+    }
+
+    removeConnectionsForWidget(
+        widget
+    ) {
+        const connectionsToRemove =
+            this.connections.filter(
+                (connection) => {
+                    return (
+                        connection.sourceWidget ===
+                            widget ||
+                        connection.targetWidget ===
+                            widget
+                    );
+                }
+            );
+
+        connectionsToRemove.forEach(
+            (connection) => {
+                this.removeConnection(
+                    connection
+                );
+            }
+        );
+    }
+
+    clearConnections() {
+        this.connections.forEach(
+            (connection) => {
+                connection.remove();
+            }
+        );
+
+        this.connections = [];
+
+        this.nextConnectionNumber = 1;
+
+        this.cancelConnectionDrag();
     }
 
 }

@@ -583,3 +583,50 @@ button {
 .widget-context-menu button:hover {
     background-color: #f1f5f9;
 }
+
+/* Workflow connections */
+
+.connection-layer {
+    position: absolute;
+    left: 0;
+    top: 0;
+
+    width: 100%;
+    height: 100%;
+
+    overflow: visible;
+
+    pointer-events: none;
+
+    z-index: 1;
+}
+
+.workflow-connection {
+    fill: none;
+
+    stroke: #64748b;
+    stroke-width: 3;
+
+    vector-effect:
+        non-scaling-stroke;
+}
+
+.connection-preview {
+    stroke: #2563eb;
+
+    stroke-dasharray:
+        8 6;
+}
+
+.input-port.connection-target {
+    border-color: #16a34a;
+    background-color: #dcfce7;
+
+    box-shadow:
+        0 0 0 6px
+        rgb(22 163 74 / 15%);
+
+    transform:
+        translateY(-50%)
+        scale(1.35);
+}

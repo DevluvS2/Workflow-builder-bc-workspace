@@ -89,6 +89,19 @@ class Widget {
             }
         );
 
+        outputPort.addEventListener(
+            "pointerdown",
+            (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+
+                this.board.startConnection(
+                    this,
+                    event
+                );
+            }
+        );
+
         this.updatePosition();
         this.addEventListeners();
 
@@ -204,6 +217,11 @@ class Widget {
         this.y = Math.max(0, this.y);
 
         this.updatePosition();
+
+        this.board.updateConnectionsForWidget(
+            this
+        );
+
         this.board.updateWorkflowMap();
     }
 
@@ -247,6 +265,10 @@ class Widget {
 
         this.board.updateWorkflowMap();
         this.board.scheduleSave();
+
+        this.board.updateConnectionsForWidget(
+            this
+        );
     }
 
     setType(newType) {
@@ -263,6 +285,10 @@ class Widget {
         }
 
         this.board.scheduleSave();
+
+        this.board.updateConnectionsForWidget(
+            this
+        );
     }
 
     setSelected(isSelected) {
@@ -271,6 +297,42 @@ class Widget {
         }
 
         this.element.classList.toggle("selected", isSelected);
+    }
+
+    getInputPortPosition() {
+        if (!this.inputPortElement) {
+            return {
+                x: this.x,
+                y: this.y
+            };
+        }
+
+        const rect =
+            this.inputPortElement
+                .getBoundingClientRect();
+
+        return this.board.screenToWorkspace(
+            rect.left + rect.width / 2,
+            rect.top + rect.height / 2
+        );
+    }
+
+    getOutputPortPosition() {
+        if (!this.outputPortElement) {
+            return {
+                x: this.x,
+                y: this.y
+            };
+        }
+
+        const rect =
+            this.outputPortElement
+                .getBoundingClientRect();
+
+        return this.board.screenToWorkspace(
+            rect.left + rect.width / 2,
+            rect.top + rect.height / 2
+        );
     }
 
     toJSON() {
