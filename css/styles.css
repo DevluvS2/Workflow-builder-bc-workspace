@@ -27,7 +27,7 @@ button {
 
 .board {
     display: grid;
-    grid-template-rows: 48px 1fr 32px;
+    grid-template-rows: 48px minmax(0, 1fr) auto 32px;
     width: 100%;
     height: 100%;
     background-color: #f3f4f6;
@@ -1604,6 +1604,406 @@ button {
 
 @media (prefers-reduced-motion: reduce) {
     .app-dialog {
+        transition: none;
+    }
+}
+
+/* =========================================
+   Multi-source input connections
+   ========================================= */
+
+.input-connected-sources {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-top: 2px;
+}
+
+.input-source-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+    padding: 6px 7px;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    background-color: #f8fafc;
+    font-size: 11px;
+    color: #334155;
+}
+
+.input-source-row span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.input-source-remove {
+    flex: 0 0 auto;
+    padding: 3px 6px;
+    border: 1px solid #fecaca;
+    border-radius: 4px;
+    background-color: #fff;
+    color: #b91c1c;
+    font-size: 10px;
+}
+
+.input-source-remove:hover {
+    background-color: #fef2f2;
+    border-color: #fca5a5;
+}
+
+.input-source-empty {
+    padding: 5px 7px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 4px;
+    color: #94a3b8;
+    font-size: 11px;
+}
+
+.input-source-hint {
+    color: #64748b;
+    font-size: 10px;
+    line-height: 1.35;
+}
+
+
+/* =========================================
+   Execution Console
+   ========================================= */
+
+.console-toolbar-button.active {
+    background-color: #374151 !important;
+    color: #93c5fd !important;
+    border-color: rgb(96 165 250 / 28%) !important;
+}
+
+.execution-console {
+    position: relative;
+    min-height: 34px;
+    height: 34px;
+    overflow: hidden;
+
+    border-top: 1px solid #334155;
+    background-color: #0f172a;
+    color: #e2e8f0;
+
+    transition: height 140ms ease;
+}
+
+.execution-console.open {
+    min-height: 120px;
+}
+
+.execution-console.resizing {
+    transition: none;
+}
+
+.execution-console-resizer {
+    position: absolute;
+    top: -3px;
+    left: 0;
+    right: 0;
+    height: 7px;
+    z-index: 4;
+
+    cursor: ns-resize;
+    touch-action: none;
+}
+
+.execution-console.open .execution-console-resizer:hover,
+.execution-console.resizing .execution-console-resizer {
+    background-color: rgb(96 165 250 / 45%);
+}
+
+.execution-console-header {
+    position: relative;
+    z-index: 2;
+
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+
+    height: 34px;
+    padding: 0 10px 0 12px;
+
+    border-bottom: 1px solid #1e293b;
+    background-color: #111827;
+
+    user-select: none;
+}
+
+.execution-console-heading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.execution-console-heading strong {
+    color: #f8fafc;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+}
+
+.execution-console-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    color: #93c5fd;
+}
+
+.execution-console-icon svg {
+    width: 17px;
+    height: 17px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.execution-console-status {
+    display: inline-flex;
+    align-items: center;
+    min-height: 18px;
+    padding: 2px 7px;
+
+    border: 1px solid #475569;
+    border-radius: 999px;
+
+    color: #cbd5e1;
+    background-color: rgb(51 65 85 / 55%);
+
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.execution-console-status.status-running {
+    border-color: rgb(96 165 250 / 45%);
+    background-color: rgb(37 99 235 / 20%);
+    color: #bfdbfe;
+}
+
+.execution-console-status.status-finished {
+    border-color: rgb(74 222 128 / 38%);
+    background-color: rgb(22 163 74 / 18%);
+    color: #bbf7d0;
+}
+
+.execution-console-status.status-warning,
+.execution-console-status.status-stopped {
+    border-color: rgb(251 191 36 / 42%);
+    background-color: rgb(217 119 6 / 18%);
+    color: #fde68a;
+}
+
+.execution-console-status.status-error {
+    border-color: rgb(248 113 113 / 44%);
+    background-color: rgb(220 38 38 / 18%);
+    color: #fecaca;
+}
+
+.execution-console-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+}
+
+.execution-console-autoscroll {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+
+    color: #94a3b8;
+    font-size: 10px;
+    cursor: pointer;
+}
+
+.execution-console-autoscroll input {
+    width: 13px;
+    height: 13px;
+    margin: 0;
+    accent-color: #60a5fa;
+}
+
+.execution-console-action,
+.execution-console-toggle {
+    height: 24px;
+    padding: 0 8px;
+
+    border: 1px solid #334155;
+    border-radius: 4px;
+
+    background-color: transparent;
+    color: #cbd5e1;
+
+    font-size: 10px;
+}
+
+.execution-console-action:hover,
+.execution-console-toggle:hover {
+    border-color: #475569;
+    background-color: #1e293b;
+    color: #f8fafc;
+}
+
+.execution-console-toggle {
+    width: 28px;
+    padding: 0;
+    font-size: 15px;
+    line-height: 1;
+}
+
+.execution-console:not(.open) .execution-console-autoscroll,
+.execution-console:not(.open) .execution-console-action {
+    display: none;
+}
+
+.execution-console-body {
+    height: calc(100% - 34px);
+    min-height: 0;
+    overflow: auto;
+    padding: 7px 10px 10px;
+
+    background-color: #0b1120;
+
+    font-family:
+        "SFMono-Regular",
+        Consolas,
+        "Liberation Mono",
+        Menlo,
+        monospace;
+    font-size: 11px;
+    line-height: 1.45;
+
+    scrollbar-color: #475569 #0b1120;
+}
+
+.execution-console:not(.open) .execution-console-body {
+    display: none;
+}
+
+.execution-console-empty {
+    display: flex;
+    align-items: center;
+    height: 100%;
+    min-height: 56px;
+
+    color: #64748b;
+    font-style: italic;
+}
+
+.execution-log-entry {
+    display: grid;
+    grid-template-columns: 72px 56px minmax(0, 1fr);
+    align-items: start;
+    gap: 7px;
+
+    padding: 3px 4px;
+    border-radius: 3px;
+}
+
+.execution-log-entry:hover {
+    background-color: rgb(30 41 59 / 58%);
+}
+
+.execution-log-time {
+    color: #64748b;
+    white-space: nowrap;
+}
+
+.execution-log-level {
+    display: inline-flex;
+    justify-content: center;
+
+    min-width: 48px;
+    padding: 1px 5px;
+    border-radius: 3px;
+
+    color: #94a3b8;
+    background-color: rgb(51 65 85 / 45%);
+
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+.execution-log-content {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    min-width: 0;
+}
+
+.execution-log-message {
+    color: #dbeafe;
+    overflow-wrap: anywhere;
+}
+
+.execution-log-detail {
+    color: #94a3b8;
+    overflow-wrap: anywhere;
+}
+
+.execution-log-entry.log-node .execution-log-level {
+    color: #ddd6fe;
+    background-color: rgb(124 58 237 / 18%);
+}
+
+.execution-log-entry.log-node .execution-log-message {
+    color: #ddd6fe;
+}
+
+.execution-log-entry.log-success .execution-log-level {
+    color: #bbf7d0;
+    background-color: rgb(22 163 74 / 18%);
+}
+
+.execution-log-entry.log-success .execution-log-message {
+    color: #bbf7d0;
+}
+
+.execution-log-entry.log-warning .execution-log-level {
+    color: #fde68a;
+    background-color: rgb(217 119 6 / 18%);
+}
+
+.execution-log-entry.log-warning .execution-log-message {
+    color: #fde68a;
+}
+
+.execution-log-entry.log-error .execution-log-level {
+    color: #fecaca;
+    background-color: rgb(220 38 38 / 18%);
+}
+
+.execution-log-entry.log-error .execution-log-message {
+    color: #fecaca;
+}
+
+@media (max-width: 760px) {
+    .execution-console-autoscroll {
+        display: none;
+    }
+
+    .execution-log-entry {
+        grid-template-columns: 62px 48px minmax(0, 1fr);
+        gap: 5px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .execution-console {
         transition: none;
     }
 }

@@ -95,6 +95,21 @@ class Board {
             warnings: []
         };
 
+        /*
+         * Bottom execution console.
+         *
+         * Logs are intentionally session-only. They describe what happened
+         * during the current browser session and are not saved into workflow JSON.
+         */
+        this.executionConsoleOpen = false;
+        this.executionConsoleHeight = 210;
+        this.executionConsoleMinHeight = 120;
+        this.executionConsoleMaxHeight = 420;
+        this.executionConsoleAutoScroll = true;
+        this.executionConsoleStatus = "idle";
+        this.executionLogEntries = [];
+        this.executionLogLimit = 500;
+
         document.addEventListener("keydown", (event) => {
             this.handleKeyDown(event);
         });
@@ -122,10 +137,13 @@ class Board {
 
         const menuBar = this.createMenuBar();
         const mainArea = this.createMainArea();
+        const executionConsole =
+            this.createExecutionConsole();
         const statsBar = this.createStatsBar();
 
         boardElement.appendChild(menuBar);
         boardElement.appendChild(mainArea);
+        boardElement.appendChild(executionConsole);
         boardElement.appendChild(statsBar);
 
         this.rootElement.appendChild(boardElement);
@@ -295,6 +313,45 @@ class Board {
             }
         });
 
+        const executionConsoleOption =
+            document.createElement("label");
+        executionConsoleOption.className =
+            "dropdown-check-item";
+
+        const executionConsoleCheckbox =
+            document.createElement("input");
+        executionConsoleCheckbox.type = "checkbox";
+        executionConsoleCheckbox.checked =
+            this.executionConsoleOpen;
+        executionConsoleCheckbox.setAttribute(
+            "aria-label",
+            "Show execution console"
+        );
+
+        const executionConsoleText =
+            document.createElement("span");
+        executionConsoleText.textContent =
+            "Execution Console";
+
+        executionConsoleOption.appendChild(
+            executionConsoleCheckbox
+        );
+        executionConsoleOption.appendChild(
+            executionConsoleText
+        );
+
+        this.executionConsoleViewCheckbox =
+            executionConsoleCheckbox;
+
+        executionConsoleCheckbox.addEventListener(
+            "change",
+            () => {
+                this.setExecutionConsoleOpen(
+                    executionConsoleCheckbox.checked
+                );
+            }
+        );
+
         const viewDivider = document.createElement("div");
         viewDivider.className = "dropdown-divider";
 
@@ -307,6 +364,9 @@ class Board {
 
         viewDropdown.appendChild(leftPanelOption);
         viewDropdown.appendChild(rightPanelOption);
+        viewDropdown.appendChild(
+            executionConsoleOption
+        );
         viewDropdown.appendChild(viewDivider);
         viewDropdown.appendChild(resetViewMenuItem);
         viewMenu.appendChild(viewButton);
@@ -416,6 +476,40 @@ class Board {
         this.undoButton = undoButton;
         this.redoButton = redoButton;
 
+        /* =============================
+         * Execution Console toolbar button
+         * ============================= */
+        const consoleButton =
+            document.createElement("button");
+        consoleButton.className =
+            "history-icon-button console-toolbar-button";
+        consoleButton.type = "button";
+        consoleButton.title =
+            "Toggle Execution Console (Ctrl+`)";
+        consoleButton.setAttribute(
+            "aria-label",
+            "Toggle Execution Console"
+        );
+        consoleButton.setAttribute(
+            "aria-pressed",
+            String(this.executionConsoleOpen)
+        );
+        consoleButton.innerHTML = `
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+                <path d="M7 9L10 12L7 15"></path>
+                <path d="M13 15H17"></path>
+            </svg>
+        `;
+        consoleButton.addEventListener(
+            "click",
+            () => {
+                this.toggleExecutionConsole();
+            }
+        );
+        this.executionConsoleToolbarButton =
+            consoleButton;
+
         const spacer = document.createElement("div");
         spacer.className = "menu-spacer";
 
@@ -430,6 +524,7 @@ class Board {
         menuBar.appendChild(workflowMenu);
         menuBar.appendChild(helpButton);
         menuBar.appendChild(historyControls);
+        menuBar.appendChild(consoleButton);
         menuBar.appendChild(spacer);
         menuBar.appendChild(zoomDisplay);
 
@@ -833,6 +928,731 @@ class Board {
         );
 
         return workflowMap;
+    }
+
+    createExecutionConsole() {
+        const panel =
+            document.createElement("section");
+
+        panel.className =
+            "execution-console";
+
+        panel.setAttribute(
+            "aria-label",
+            "Execution Console"
+        );
+
+        const resizeHandle =
+            document.createElement("div");
+
+        resizeHandle.className =
+            "execution-console-resizer";
+
+        resizeHandle.title =
+            "Drag to resize console";
+
+        resizeHandle.addEventListener(
+            "pointerdown",
+            (event) => {
+                this.startExecutionConsoleResize(
+                    event
+                );
+            }
+        );
+
+        const header =
+            document.createElement("div");
+
+        header.className =
+            "execution-console-header";
+
+        const headingGroup =
+            document.createElement("div");
+
+        headingGroup.className =
+            "execution-console-heading";
+
+        const consoleIcon =
+            document.createElement("span");
+
+        consoleIcon.className =
+            "execution-console-icon";
+
+        consoleIcon.innerHTML = `
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7 8L10.5 11.5L7 15"></path>
+                <path d="M13 15H17"></path>
+                <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+            </svg>
+        `;
+
+        const title =
+            document.createElement("strong");
+
+        title.textContent =
+            "Execution Console";
+
+        const statusBadge =
+            document.createElement("span");
+
+        statusBadge.className =
+            "execution-console-status";
+
+        headingGroup.appendChild(
+            consoleIcon
+        );
+        headingGroup.appendChild(title);
+        headingGroup.appendChild(
+            statusBadge
+        );
+
+        const controls =
+            document.createElement("div");
+
+        controls.className =
+            "execution-console-controls";
+
+        const autoScrollLabel =
+            document.createElement("label");
+
+        autoScrollLabel.className =
+            "execution-console-autoscroll";
+
+        const autoScrollCheckbox =
+            document.createElement("input");
+
+        autoScrollCheckbox.type =
+            "checkbox";
+
+        autoScrollCheckbox.checked =
+            this.executionConsoleAutoScroll;
+
+        autoScrollCheckbox.addEventListener(
+            "change",
+            () => {
+                this.executionConsoleAutoScroll =
+                    autoScrollCheckbox.checked;
+            }
+        );
+
+        const autoScrollText =
+            document.createElement("span");
+
+        autoScrollText.textContent =
+            "Auto-scroll";
+
+        autoScrollLabel.appendChild(
+            autoScrollCheckbox
+        );
+        autoScrollLabel.appendChild(
+            autoScrollText
+        );
+
+        const clearButton =
+            document.createElement("button");
+
+        clearButton.type = "button";
+        clearButton.className =
+            "execution-console-action";
+        clearButton.textContent = "Clear";
+        clearButton.title =
+            "Clear execution log";
+
+        clearButton.addEventListener(
+            "click",
+            (event) => {
+                event.stopPropagation();
+                this.clearExecutionConsole();
+            }
+        );
+
+        const toggleButton =
+            document.createElement("button");
+
+        toggleButton.type = "button";
+        toggleButton.className =
+            "execution-console-toggle";
+        toggleButton.title =
+            "Expand/collapse execution console";
+        toggleButton.setAttribute(
+            "aria-label",
+            "Expand or collapse execution console"
+        );
+
+        toggleButton.addEventListener(
+            "click",
+            (event) => {
+                event.stopPropagation();
+                this.toggleExecutionConsole();
+            }
+        );
+
+        controls.appendChild(
+            autoScrollLabel
+        );
+        controls.appendChild(clearButton);
+        controls.appendChild(toggleButton);
+
+        header.appendChild(headingGroup);
+        header.appendChild(controls);
+
+        header.addEventListener(
+            "dblclick",
+            () => {
+                this.toggleExecutionConsole();
+            }
+        );
+
+        const body =
+            document.createElement("div");
+
+        body.className =
+            "execution-console-body";
+
+        body.setAttribute(
+            "role",
+            "log"
+        );
+
+        body.setAttribute(
+            "aria-live",
+            "polite"
+        );
+
+        panel.appendChild(resizeHandle);
+        panel.appendChild(header);
+        panel.appendChild(body);
+
+        this.executionConsoleElement =
+            panel;
+        this.executionConsoleBody = body;
+        this.executionConsoleStatusElement =
+            statusBadge;
+        this.executionConsoleToggleButton =
+            toggleButton;
+        this.executionConsoleAutoScrollCheckbox =
+            autoScrollCheckbox;
+
+        this.renderExecutionConsoleLogs();
+        this.updateExecutionConsoleState();
+
+        return panel;
+    }
+
+    setExecutionConsoleOpen(isOpen) {
+        this.executionConsoleOpen =
+            Boolean(isOpen);
+
+        this.updateExecutionConsoleState();
+
+        if (
+            this.executionConsoleOpen &&
+            this.executionConsoleAutoScroll
+        ) {
+            requestAnimationFrame(
+                () => {
+                    this.scrollExecutionConsoleToBottom();
+                }
+            );
+        }
+    }
+
+    toggleExecutionConsole() {
+        this.setExecutionConsoleOpen(
+            !this.executionConsoleOpen
+        );
+    }
+
+    updateExecutionConsoleState() {
+        if (this.executionConsoleElement) {
+            this.executionConsoleElement.classList.toggle(
+                "open",
+                this.executionConsoleOpen
+            );
+
+            this.executionConsoleElement.style.height =
+                this.executionConsoleOpen
+                    ? `${this.executionConsoleHeight}px`
+                    : "34px";
+        }
+
+        if (this.executionConsoleToggleButton) {
+            this.executionConsoleToggleButton.textContent =
+                this.executionConsoleOpen
+                    ? "⌄"
+                    : "⌃";
+
+            this.executionConsoleToggleButton.setAttribute(
+                "aria-expanded",
+                String(this.executionConsoleOpen)
+            );
+        }
+
+        if (this.executionConsoleViewCheckbox) {
+            this.executionConsoleViewCheckbox.checked =
+                this.executionConsoleOpen;
+        }
+
+        if (this.executionConsoleToolbarButton) {
+            this.executionConsoleToolbarButton.classList.toggle(
+                "active",
+                this.executionConsoleOpen
+            );
+
+            this.executionConsoleToolbarButton.setAttribute(
+                "aria-pressed",
+                String(this.executionConsoleOpen)
+            );
+        }
+
+        if (this.executionConsoleStatusElement) {
+            const status =
+                this.executionConsoleStatus ||
+                "idle";
+
+            this.executionConsoleStatusElement.textContent =
+                status;
+
+            this.executionConsoleStatusElement.className =
+                `execution-console-status status-${status}`;
+        }
+    }
+
+    setExecutionConsoleStatus(status) {
+        const allowed = new Set([
+            "idle",
+            "running",
+            "finished",
+            "warning",
+            "error",
+            "stopped"
+        ]);
+
+        this.executionConsoleStatus =
+            allowed.has(status)
+                ? status
+                : "idle";
+
+        this.updateExecutionConsoleState();
+    }
+
+    startExecutionConsoleResize(event) {
+        if (
+            event.button !== 0 ||
+            !this.executionConsoleOpen
+        ) {
+            return;
+        }
+
+        event.preventDefault();
+
+        const handle =
+            event.currentTarget;
+
+        const startY =
+            event.clientY;
+
+        const startHeight =
+            this.executionConsoleHeight;
+
+        handle.setPointerCapture(
+            event.pointerId
+        );
+
+        this.executionConsoleElement?.classList.add(
+            "resizing"
+        );
+
+        const resize = (moveEvent) => {
+            const deltaY =
+                moveEvent.clientY -
+                startY;
+
+            this.executionConsoleHeight =
+                Math.max(
+                    this.executionConsoleMinHeight,
+                    Math.min(
+                        this.executionConsoleMaxHeight,
+                        startHeight - deltaY
+                    )
+                );
+
+            if (
+                this.executionConsoleElement
+            ) {
+                this.executionConsoleElement.style.height =
+                    `${this.executionConsoleHeight}px`;
+            }
+        };
+
+        const stop = (stopEvent) => {
+            handle.removeEventListener(
+                "pointermove",
+                resize
+            );
+            handle.removeEventListener(
+                "pointerup",
+                stop
+            );
+            handle.removeEventListener(
+                "pointercancel",
+                stop
+            );
+
+            if (
+                handle.hasPointerCapture(
+                    stopEvent.pointerId
+                )
+            ) {
+                handle.releasePointerCapture(
+                    stopEvent.pointerId
+                );
+            }
+
+            this.executionConsoleElement?.classList.remove(
+                "resizing"
+            );
+        };
+
+        handle.addEventListener(
+            "pointermove",
+            resize
+        );
+        handle.addEventListener(
+            "pointerup",
+            stop
+        );
+        handle.addEventListener(
+            "pointercancel",
+            stop
+        );
+    }
+
+    clearExecutionConsole() {
+        this.executionLogEntries = [];
+        this.renderExecutionConsoleLogs();
+    }
+
+    formatExecutionLogValue(value) {
+        if (value === undefined) {
+            return "<undefined>";
+        }
+
+        if (value === null) {
+            return "null";
+        }
+
+        let text;
+
+        if (
+            typeof value === "object"
+        ) {
+            try {
+                text = JSON.stringify(value);
+            } catch (error) {
+                text = String(value);
+            }
+        } else {
+            text = String(value);
+        }
+
+        if (text === "") {
+            return "<empty>";
+        }
+
+        const maximumLength = 180;
+
+        return text.length > maximumLength
+            ? `${text.slice(0, maximumLength)}…`
+            : text;
+    }
+
+    getWidgetInputLogSummary(widget) {
+        if (
+            !widget ||
+            !Array.isArray(widget.inputs) ||
+            widget.inputs.length === 0
+        ) {
+            return "No inputs";
+        }
+
+        return widget.inputs
+            .map(
+                (input) =>
+                    `${input.name}: ${this.formatExecutionLogValue(input.value)}`
+            )
+            .join(" · ");
+    }
+
+    getWidgetOutputLogSummary(widget) {
+        if (
+            !widget ||
+            !Array.isArray(widget.outputs) ||
+            widget.outputs.length === 0
+        ) {
+            return "No outputs";
+        }
+
+        return widget.outputs
+            .map(
+                (output) =>
+                    `${output.name}: ${this.formatExecutionLogValue(output.value)}`
+            )
+            .join(" · ");
+    }
+
+    appendExecutionLog(
+        level,
+        message,
+        detail = "",
+        options = {}
+    ) {
+        const allowedLevels = new Set([
+            "info",
+            "node",
+            "success",
+            "warning",
+            "error"
+        ]);
+
+        const normalizedLevel =
+            allowedLevels.has(level)
+                ? level
+                : "info";
+
+        const now = new Date();
+
+        const timestamp =
+            now.toLocaleTimeString(
+                [],
+                {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit"
+                }
+            );
+
+        const entry = {
+            id:
+                `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            timestamp,
+            level: normalizedLevel,
+            message: String(message || ""),
+            detail: String(detail || "")
+        };
+
+        this.executionLogEntries.push(
+            entry
+        );
+
+        if (
+            this.executionLogEntries.length >
+            this.executionLogLimit
+        ) {
+            this.executionLogEntries.splice(
+                0,
+                this.executionLogEntries.length -
+                    this.executionLogLimit
+            );
+        }
+
+        if (this.executionConsoleBody) {
+            const empty =
+                this.executionConsoleBody.querySelector(
+                    ".execution-console-empty"
+                );
+
+            if (empty) {
+                empty.remove();
+            }
+
+            this.executionConsoleBody.appendChild(
+                this.createExecutionLogElement(
+                    entry
+                )
+            );
+
+            while (
+                this.executionConsoleBody.children.length >
+                this.executionLogLimit
+            ) {
+                this.executionConsoleBody.firstElementChild?.remove();
+            }
+        }
+
+        if (options.open === true) {
+            this.setExecutionConsoleOpen(true);
+        }
+
+        if (
+            this.executionConsoleAutoScroll
+        ) {
+            requestAnimationFrame(
+                () => {
+                    this.scrollExecutionConsoleToBottom();
+                }
+            );
+        }
+
+        return entry;
+    }
+
+    createExecutionLogElement(entry) {
+        const row =
+            document.createElement("div");
+
+        row.className =
+            `execution-log-entry log-${entry.level}`;
+
+        const time =
+            document.createElement("span");
+
+        time.className =
+            "execution-log-time";
+        time.textContent =
+            `[${entry.timestamp}]`;
+
+        const badge =
+            document.createElement("span");
+
+        badge.className =
+            "execution-log-level";
+        badge.textContent =
+            entry.level === "node"
+                ? "NODE"
+                : entry.level.toUpperCase();
+
+        const content =
+            document.createElement("div");
+
+        content.className =
+            "execution-log-content";
+
+        const message =
+            document.createElement("span");
+
+        message.className =
+            "execution-log-message";
+        message.textContent =
+            entry.message;
+
+        content.appendChild(message);
+
+        if (entry.detail) {
+            const detail =
+                document.createElement("span");
+
+            detail.className =
+                "execution-log-detail";
+            detail.textContent =
+                entry.detail;
+
+            content.appendChild(detail);
+        }
+
+        row.appendChild(time);
+        row.appendChild(badge);
+        row.appendChild(content);
+
+        return row;
+    }
+
+    renderExecutionConsoleLogs() {
+        if (!this.executionConsoleBody) {
+            return;
+        }
+
+        this.executionConsoleBody.innerHTML =
+            "";
+
+        if (
+            this.executionLogEntries.length === 0
+        ) {
+            const empty =
+                document.createElement("div");
+
+            empty.className =
+                "execution-console-empty";
+
+            empty.textContent =
+                "No execution logs yet. Run or validate the workflow to see activity here.";
+
+            this.executionConsoleBody.appendChild(
+                empty
+            );
+
+            return;
+        }
+
+        this.executionLogEntries.forEach(
+            (entry) => {
+                this.executionConsoleBody.appendChild(
+                    this.createExecutionLogElement(
+                        entry
+                    )
+                );
+            }
+        );
+
+        if (
+            this.executionConsoleAutoScroll
+        ) {
+            this.scrollExecutionConsoleToBottom();
+        }
+    }
+
+    scrollExecutionConsoleToBottom() {
+        if (!this.executionConsoleBody) {
+            return;
+        }
+
+        this.executionConsoleBody.scrollTop =
+            this.executionConsoleBody.scrollHeight;
+    }
+
+    logValidationReport(
+        report,
+        { open = false } = {}
+    ) {
+        if (!report) {
+            return;
+        }
+
+        if (report.valid) {
+            this.appendExecutionLog(
+                "success",
+                "Workflow validation passed.",
+                report.warnings.length > 0
+                    ? `${report.warnings.length} warning(s)`
+                    : "No blocking issues",
+                { open }
+            );
+        } else {
+            this.appendExecutionLog(
+                "error",
+                "Workflow validation failed.",
+                `${report.errors.length} error(s), ${report.warnings.length} warning(s)`,
+                { open }
+            );
+        }
+
+        report.errors.forEach(
+            (error) => {
+                this.appendExecutionLog(
+                    "error",
+                    error
+                );
+            }
+        );
+
+        report.warnings.forEach(
+            (warning) => {
+                this.appendExecutionLog(
+                    "warning",
+                    warning
+                );
+            }
+        );
     }
 
     createStatsBar() {
@@ -1856,6 +2676,15 @@ class Board {
 
         if (
             modifierKey &&
+            event.code === "Backquote"
+        ) {
+            event.preventDefault();
+            this.toggleExecutionConsole();
+            return;
+        }
+
+        if (
+            modifierKey &&
             !event.shiftKey &&
             event.key.toLowerCase() === "z"
         ) {
@@ -2107,19 +2936,92 @@ class Board {
         };
     }
 
+    getIncomingConnections(
+        widget,
+        inputPortId
+    ) {
+        return this.connections.filter(
+            (connection) =>
+                connection.targetWidget ===
+                    widget &&
+                connection.targetPortId ===
+                    inputPortId
+        );
+    }
+
     getIncomingConnection(
         widget,
         inputPortId
     ) {
         return (
-            this.connections.find(
-                (connection) =>
-                    connection.targetWidget ===
-                        widget &&
-                    connection.targetPortId ===
-                        inputPortId
-            ) || null
+            this.getIncomingConnections(
+                widget,
+                inputPortId
+            )[0] || null
         );
+    }
+
+    refreshInputValueFromConnections(
+        widget,
+        inputPortId
+    ) {
+        if (!widget) {
+            return "";
+        }
+
+        const input =
+            widget.getInputById(
+                inputPortId
+            );
+
+        if (!input) {
+            return "";
+        }
+
+        const incomingConnections =
+            this.getIncomingConnections(
+                widget,
+                inputPortId
+            );
+
+        if (
+            incomingConnections.length === 0
+        ) {
+            input.value =
+                input.manualValue;
+
+            widget.refreshContent();
+            return input.value;
+        }
+
+        const values =
+            incomingConnections.map(
+                (connection) => {
+                    const sourceOutput =
+                        connection.sourceWidget
+                            .getOutputById(
+                                connection.sourcePortId
+                            );
+
+                    return sourceOutput
+                        ? sourceOutput.value
+                        : "";
+                }
+            );
+
+        /*
+         * Backward-compatible behavior:
+         * one source => scalar value
+         * multiple sources => ordered array
+         */
+        input.value =
+            values.length === 1
+                ? values[0]
+                : values;
+
+        widget.refreshContent();
+
+        return input.value;
     }
 
     getOutgoingConnections(
@@ -2164,11 +3066,10 @@ class Board {
                         );
 
                 if (targetInput) {
-                    targetInput.value =
-                        output.value;
-
-                    connection.targetWidget
-                        .refreshContent();
+                    this.refreshInputValueFromConnections(
+                        connection.targetWidget,
+                        connection.targetPortId
+                    );
                 }
             }
         );
@@ -2238,26 +3139,17 @@ class Board {
             );
 
         const existingConnections =
-            this.connections.filter(
-                (connection) =>
-                    connection.targetWidget ===
-                        targetWidget &&
-                    connection.targetPortId ===
-                        targetPortId
+            this.getIncomingConnections(
+                targetWidget,
+                targetPortId
             );
 
-        const sourceSelection =
-            this.parseInputSourceSelection(
-                selectionValue
-            );
-
-        if (!sourceSelection) {
+        if (selectionValue === "manual") {
             if (
                 existingConnections.length === 0
             ) {
                 input.value =
                     input.manualValue;
-
                 targetWidget.refreshContent();
                 return;
             }
@@ -2284,6 +3176,15 @@ class Board {
             return;
         }
 
+        const sourceSelection =
+            this.parseInputSourceSelection(
+                selectionValue
+            );
+
+        if (!sourceSelection) {
+            return;
+        }
+
         const sourceWidget =
             this.widgets.find(
                 (widget) =>
@@ -2306,27 +3207,20 @@ class Board {
             return;
         }
 
-        if (
-            existingConnections.length === 1 &&
-            existingConnections[0]
-                .sourceWidget === sourceWidget &&
-            existingConnections[0]
-                .sourcePortId ===
-                sourcePort.id
-        ) {
+        const duplicate =
+            existingConnections.find(
+                (connection) =>
+                    connection.sourceWidget ===
+                        sourceWidget &&
+                    connection.sourcePortId ===
+                        sourcePort.id
+            );
+
+        if (duplicate) {
             return;
         }
 
         this.recordHistoryState();
-
-        existingConnections.forEach(
-            (connection) => {
-                this.removeConnection(
-                    connection,
-                    false
-                );
-            }
-        );
 
         this.addConnection(
             sourceWidget,
@@ -2335,8 +3229,11 @@ class Board {
             targetPortId
         );
 
-        input.value = sourcePort.value;
-        targetWidget.refreshContent();
+        this.refreshInputValueFromConnections(
+            targetWidget,
+            targetPortId
+        );
+
         this.showWidgetProperties(
             targetWidget
         );
@@ -2592,7 +3489,7 @@ class Board {
         const inputsSection =
             this.createPropertiesSection(
                 "Inputs",
-                "Choose a previous node output to connect it automatically, or use a manual value."
+                "Connect one or more previous outputs to the same input. Multiple sources are delivered as an ordered array."
             );
 
         widget.inputs.forEach(
@@ -2637,6 +3534,12 @@ class Board {
                     }
                 );
 
+                const incomingConnections =
+                    this.getIncomingConnections(
+                        widget,
+                        input.id
+                    );
+
                 const sourceSelect =
                     document.createElement(
                         "select"
@@ -2644,13 +3547,24 @@ class Board {
                 sourceSelect.className =
                     "input-source-select";
 
+                const placeholderOption =
+                    document.createElement(
+                        "option"
+                    );
+                placeholderOption.value = "";
+                placeholderOption.textContent =
+                    "+ Add source connection…";
+                sourceSelect.appendChild(
+                    placeholderOption
+                );
+
                 const manualOption =
                     document.createElement(
                         "option"
                     );
                 manualOption.value = "manual";
                 manualOption.textContent =
-                    "Manual / unconnected value";
+                    "Use manual value (disconnect all)";
                 sourceSelect.appendChild(
                     manualOption
                 );
@@ -2665,6 +3579,15 @@ class Board {
 
                         sourceWidget.outputs.forEach(
                             (output) => {
+                                const alreadyConnected =
+                                    incomingConnections.some(
+                                        (connection) =>
+                                            connection.sourceWidget ===
+                                                sourceWidget &&
+                                            connection.sourcePortId ===
+                                                output.id
+                                    );
+
                                 const option =
                                     document.createElement(
                                         "option"
@@ -2674,7 +3597,10 @@ class Board {
                                     `${sourceWidget.id}::${output.id}`;
 
                                 option.textContent =
-                                    `${sourceWidget.title} / ${output.name}`;
+                                    `${alreadyConnected ? "✓ " : ""}${sourceWidget.title} / ${output.name}`;
+
+                                option.disabled =
+                                    alreadyConnected;
 
                                 sourceSelect.appendChild(
                                     option
@@ -2684,20 +3610,11 @@ class Board {
                     }
                 );
 
-                const incomingConnection =
-                    this.getIncomingConnection(
-                        widget,
-                        input.id
-                    );
-
-                sourceSelect.value =
-                    this.getInputSourceSelectionValue(
-                        incomingConnection
-                    );
+                sourceSelect.value = "";
 
                 const inputMissingRequiredValue =
                     input.required !== false &&
-                    !incomingConnection &&
+                    incomingConnections.length === 0 &&
                     String(
                         input.manualValue ?? ""
                     ).trim() === "";
@@ -2711,6 +3628,12 @@ class Board {
                 sourceSelect.addEventListener(
                     "change",
                     () => {
+                        if (
+                            sourceSelect.value === ""
+                        ) {
+                            return;
+                        }
+
                         this.connectInputFromSource(
                             widget,
                             input.id,
@@ -2718,6 +3641,104 @@ class Board {
                         );
                     }
                 );
+
+                const connectedSources =
+                    document.createElement(
+                        "div"
+                    );
+                connectedSources.className =
+                    "input-connected-sources";
+
+                if (
+                    incomingConnections.length === 0
+                ) {
+                    const emptySources =
+                        document.createElement(
+                            "div"
+                        );
+                    emptySources.className =
+                        "input-source-empty";
+                    emptySources.textContent =
+                        "No connected sources";
+                    connectedSources.appendChild(
+                        emptySources
+                    );
+                } else {
+                    incomingConnections.forEach(
+                        (connection, index) => {
+                            const sourceOutput =
+                                connection.sourceWidget
+                                    .getOutputById(
+                                        connection.sourcePortId
+                                    );
+
+                            const row =
+                                document.createElement(
+                                    "div"
+                                );
+                            row.className =
+                                "input-source-row";
+
+                            const sourceText =
+                                document.createElement(
+                                    "span"
+                                );
+                            sourceText.textContent =
+                                `${index + 1}. ${connection.sourceWidget.title} / ${sourceOutput ? sourceOutput.name : "output"}`;
+
+                            const removeSourceButton =
+                                document.createElement(
+                                    "button"
+                                );
+                            removeSourceButton.type =
+                                "button";
+                            removeSourceButton.className =
+                                "input-source-remove";
+                            removeSourceButton.textContent =
+                                "Remove";
+
+                            removeSourceButton.addEventListener(
+                                "click",
+                                () => {
+                                    this.recordHistoryState();
+                                    this.removeConnection(
+                                        connection,
+                                        false
+                                    );
+                                    this.refreshInputValueFromConnections(
+                                        widget,
+                                        input.id
+                                    );
+                                    this.showWidgetProperties(
+                                        widget
+                                    );
+                                    this.scheduleSave();
+                                }
+                            );
+
+                            row.appendChild(
+                                sourceText
+                            );
+                            row.appendChild(
+                                removeSourceButton
+                            );
+                            connectedSources.appendChild(
+                                row
+                            );
+                        }
+                    );
+                }
+
+                const multiSourceHint =
+                    document.createElement(
+                        "div"
+                    );
+                multiSourceHint.className =
+                    "input-source-hint";
+                multiSourceHint.textContent =
+                    incomingConnections.length > 1
+                        ? `This input receives ${incomingConnections.length} values as an array in connection order.`
+                        : "Add another source if this input should receive multiple values.";
 
                 const manualValue =
                     document.createElement(
@@ -2731,7 +3752,7 @@ class Board {
                 manualValue.placeholder =
                     "Manual input value";
                 manualValue.disabled =
-                    Boolean(incomingConnection);
+                    incomingConnections.length > 0;
 
                 manualValue.addEventListener(
                     "change",
@@ -2750,10 +3771,10 @@ class Board {
                             manualValue.value;
 
                         if (
-                            !this.getIncomingConnection(
+                            this.getIncomingConnections(
                                 widget,
                                 input.id
-                            )
+                            ).length === 0
                         ) {
                             input.value =
                                 manualValue.value;
@@ -2830,7 +3851,7 @@ class Board {
                 removeButton.className =
                     "io-remove-button";
                 removeButton.textContent =
-                    "Remove";
+                    "Remove Input";
 
                 removeButton.addEventListener(
                     "click",
@@ -2844,6 +3865,8 @@ class Board {
 
                 card.appendChild(nameInput);
                 card.appendChild(sourceSelect);
+                card.appendChild(connectedSources);
+                card.appendChild(multiSourceHint);
                 card.appendChild(manualValue);
                 card.appendChild(cardMeta);
 
@@ -2855,7 +3878,7 @@ class Board {
                     issue.className =
                         "io-validation-message";
                     issue.textContent =
-                        "Required input needs a source or manual value.";
+                        "Required input needs at least one source or a manual value.";
                     card.appendChild(issue);
                 }
 
@@ -4964,6 +5987,7 @@ class Board {
                 "Ctrl+D — Duplicate selected widget\n" +
                 "Ctrl+S — Export workflow JSON\n" +
                 "Ctrl+Enter — Validate and run workflow\n" +
+                "Ctrl+` — Toggle execution console\n" +
                 "Delete — Delete selected widget/connection\n" +
                 "Escape — Deselect / close peek state\n" +
                 "Middle mouse drag — Pan canvas",
@@ -5104,8 +6128,6 @@ class Board {
             );
         }
 
-        const targetPortCounts = new Map();
-
         this.connections.forEach(
             (connection) => {
                 const sourcePort =
@@ -5132,27 +6154,6 @@ class Board {
                     );
                 }
 
-                const targetKey =
-                    `${connection.targetWidget.id}::${connection.targetPortId}`;
-
-                targetPortCounts.set(
-                    targetKey,
-                    (
-                        targetPortCounts.get(
-                            targetKey
-                        ) || 0
-                    ) + 1
-                );
-            }
-        );
-
-        targetPortCounts.forEach(
-            (count, key) => {
-                if (count > 1) {
-                    errors.push(
-                        `Input ${key} has more than one incoming connection.`
-                    );
-                }
             }
         );
 
@@ -5160,8 +6161,8 @@ class Board {
             (widget) => {
                 widget.inputs.forEach(
                     (input) => {
-                        const incoming =
-                            this.getIncomingConnection(
+                        const incomingConnections =
+                            this.getIncomingConnections(
                                 widget,
                                 input.id
                             );
@@ -5173,7 +6174,7 @@ class Board {
 
                         if (
                             input.required !== false &&
-                            !incoming &&
+                            incomingConnections.length === 0 &&
                             manualValue === ""
                         ) {
                             errors.push(
@@ -5320,6 +6321,11 @@ class Board {
         this.lastValidationReport = report;
 
         if (showAlert) {
+            this.logValidationReport(
+                report,
+                { open: true }
+            );
+
             void this.showMessageDialog({
                 title:
                     report.valid
@@ -5360,6 +6366,13 @@ class Board {
 
         this.lastRunRuntimeMs = 0;
         this.lastRunMemoryKb = 0;
+        this.setExecutionConsoleStatus(
+            "idle"
+        );
+        this.appendExecutionLog(
+            "info",
+            "Workflow status labels reset."
+        );
         this.updateStats();
 
         if (this.selectedWidget) {
@@ -5378,6 +6391,15 @@ class Board {
 
         this.executionRunId += 1;
         this.isWorkflowRunning = false;
+        this.setExecutionConsoleStatus(
+            "stopped"
+        );
+        this.appendExecutionLog(
+            "warning",
+            "Workflow run stopped by user.",
+            "Any node that was running has been marked stopped.",
+            { open: true }
+        );
 
         this.widgets.forEach(
             (widget) => {
@@ -5971,6 +6993,14 @@ class Board {
             this.validateWorkflow(false);
 
         if (!report.valid) {
+            this.setExecutionConsoleStatus(
+                "error"
+            );
+            this.logValidationReport(
+                report,
+                { open: true }
+            );
+
             await this.showMessageDialog({
                 title: "Workflow Cannot Run",
                 message:
@@ -5991,7 +7021,33 @@ class Board {
             this.executionRunId;
 
         this.isWorkflowRunning = true;
+        this.setExecutionConsoleStatus(
+            "running"
+        );
+        this.setExecutionConsoleOpen(true);
         this.updateRunControls();
+
+        this.appendExecutionLog(
+            "info",
+            `Workflow run #${runId} started.`,
+            `${this.widgets.length} widget(s) · ${this.connections.length} connection(s)`
+        );
+
+        if (report.warnings.length > 0) {
+            this.appendExecutionLog(
+                "warning",
+                `Run started with ${report.warnings.length} validation warning(s).`
+            );
+
+            report.warnings.forEach(
+                (warning) => {
+                    this.appendExecutionLog(
+                        "warning",
+                        warning
+                    );
+                }
+            );
+        }
 
         this.widgets.forEach(
             (widget) => {
@@ -6010,6 +7066,8 @@ class Board {
 
         this.updateStats();
 
+        let runFailed = false;
+
         try {
             for (
                 const widget of
@@ -6024,27 +7082,10 @@ class Board {
 
                 widget.inputs.forEach(
                     (input) => {
-                        const incoming =
-                            this.getIncomingConnection(
-                                widget,
-                                input.id
-                            );
-
-                        if (incoming) {
-                            const sourceOutput =
-                                incoming.sourceWidget
-                                    .getOutputById(
-                                        incoming.sourcePortId
-                                    );
-
-                            input.value =
-                                sourceOutput
-                                    ? sourceOutput.value
-                                    : "";
-                        } else {
-                            input.value =
-                                input.manualValue;
-                        }
+                        this.refreshInputValueFromConnections(
+                            widget,
+                            input.id
+                        );
                     }
                 );
 
@@ -6055,6 +7096,14 @@ class Board {
                     0
                 );
                 this.updateStats();
+
+                this.appendExecutionLog(
+                    "node",
+                    `${widget.title} started.`,
+                    this.getWidgetInputLogSummary(
+                        widget
+                    )
+                );
 
                 if (
                     this.selectedWidget ===
@@ -6136,6 +7185,12 @@ class Board {
                 widget.refreshContent();
                 this.updateStats();
 
+                this.appendExecutionLog(
+                    "success",
+                    `${widget.title} finished.`,
+                    `${this.getWidgetOutputLogSummary(widget)} · ${runtime.toFixed(1)} ms · ${memory.toFixed(1)} KB`
+                );
+
                 if (
                     this.selectedWidget ===
                     widget
@@ -6152,6 +7207,8 @@ class Board {
             ) {
                 return;
             }
+
+            runFailed = true;
 
             const runningWidget =
                 this.widgets.find(
@@ -6170,6 +7227,18 @@ class Board {
                     error.message
                 );
             }
+
+            this.setExecutionConsoleStatus(
+                "error"
+            );
+            this.appendExecutionLog(
+                "error",
+                runningWidget
+                    ? `${runningWidget.title} failed.`
+                    : "Workflow execution failed.",
+                error.message,
+                { open: true }
+            );
 
             await this.showMessageDialog({
                 title: "Workflow Stopped",
@@ -6209,6 +7278,21 @@ class Board {
                         ),
                     0
                 );
+
+            if (
+                runId ===
+                    this.executionRunId &&
+                !runFailed
+            ) {
+                this.setExecutionConsoleStatus(
+                    "finished"
+                );
+                this.appendExecutionLog(
+                    "success",
+                    `Workflow run #${runId} completed.`,
+                    `${this.lastRunRuntimeMs.toFixed(1)} ms total runtime · ${this.lastRunMemoryKb.toFixed(1)} KB estimated memory`
+                );
+            }
 
             this.updateRunControls();
             this.updateStats();
@@ -7760,37 +8844,24 @@ class Board {
                 return;
             }
 
-            const existingConnections =
-                this.connections.filter(
+            const duplicateConnection =
+                this.connections.find(
                     (connection) =>
                         connection.targetWidget ===
                             targetWidget &&
                         connection.targetPortId ===
-                            targetPortId
+                            targetPortId &&
+                        connection.sourceWidget ===
+                            sourceWidget &&
+                        connection.sourcePortId ===
+                            sourcePortId
                 );
 
-            if (
-                existingConnections.length === 1 &&
-                existingConnections[0]
-                    .sourceWidget ===
-                    sourceWidget &&
-                existingConnections[0]
-                    .sourcePortId ===
-                    sourcePortId
-            ) {
+            if (duplicateConnection) {
                 return;
             }
 
             this.recordHistoryState();
-
-            existingConnections.forEach(
-                (connection) => {
-                    this.removeConnection(
-                        connection,
-                        false
-                    );
-                }
-            );
 
             this.addConnection(
                 sourceWidget,
@@ -7799,16 +8870,10 @@ class Board {
                 targetPortId
             );
 
-            const targetInput =
-                targetWidget.getInputById(
-                    targetPortId
-                );
-
-            if (targetInput) {
-                targetInput.value =
-                    sourcePort.value;
-                targetWidget.refreshContent();
-            }
+            this.refreshInputValueFromConnections(
+                targetWidget,
+                targetPortId
+            );
 
             if (
                 this.selectedWidget ===
@@ -7881,19 +8946,6 @@ class Board {
 
         if (duplicate) {
             return duplicate;
-        }
-
-        const occupiedInput =
-            this.connections.find(
-                (connection) =>
-                    connection.targetWidget ===
-                        targetWidget &&
-                    connection.targetPortId ===
-                        resolvedTargetPortId
-            );
-
-        if (occupiedInput) {
-            return null;
         }
 
         const id =
@@ -8052,17 +9104,11 @@ class Board {
                 targetPortId
             );
 
-        if (
-            targetInput &&
-            !this.getIncomingConnection(
+        if (targetInput) {
+            this.refreshInputValueFromConnections(
                 targetWidget,
                 targetPortId
-            )
-        ) {
-            targetInput.value =
-                targetInput.manualValue;
-
-            targetWidget.refreshContent();
+            );
         }
 
         if (wasSelected) {
