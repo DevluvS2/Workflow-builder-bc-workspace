@@ -112,4 +112,17 @@ class Connection {
             `${targetPoint.x} ${targetPoint.y}`
         );
     }
+
+    toJSON() {
+        return {
+            id: this.id,
+
+            sourceWidgetId:
+                this.sourceWidget.id,
+
+            targetWidgetId:
+                this.targetWidget.id
+        };
+    }
+
 }

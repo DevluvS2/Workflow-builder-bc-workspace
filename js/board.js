@@ -900,46 +900,6 @@ class Board {
         this.updateWorkflowMap();
     }
 
-    exportWorkflow() {
-        const workflowData = {
-            version: 1,
-            zoom: this.zoom,
-            panX: this.panX,
-            panY: this.panY,
-            widgets: this.widgets.map((widget) => {
-                return widget.toJSON();
-            })
-        };
-
-        const jsonText = JSON.stringify(
-            workflowData,
-            null,
-            2
-        );
-
-        const fileBlob = new Blob(
-            [jsonText],
-            {
-                type: "application/json"
-            }
-        );
-
-        const downloadUrl =
-            URL.createObjectURL(fileBlob);
-
-        const downloadLink =
-            document.createElement("a");
-
-        downloadLink.href = downloadUrl;
-        downloadLink.download = "workflow.json";
-
-        document.body.appendChild(downloadLink);
-        downloadLink.click();
-        downloadLink.remove();
-
-        URL.revokeObjectURL(downloadUrl);
-    }
-
     importWorkflow(file) {
         const reader = new FileReader();
 
@@ -1634,6 +1594,53 @@ class Board {
             }
         );
 
+        /*
+        * Recreate saved workflow connections
+        * after all widgets exist.
+        */
+        if (
+            Array.isArray(
+                workflowData.connections
+            )
+        ) {
+            workflowData.connections.forEach(
+                (connectionData) => {
+
+                    const sourceWidget =
+                        this.widgets.find(
+                            (widget) =>
+                                widget.id ===
+                                connectionData
+                                    .sourceWidgetId
+                        );
+
+                    const targetWidget =
+                        this.widgets.find(
+                            (widget) =>
+                                widget.id ===
+                                connectionData
+                                    .targetWidgetId
+                        );
+
+                    /*
+                    * Ignore invalid connections instead
+                    * of crashing the whole workflow.
+                    */
+                    if (
+                        sourceWidget &&
+                        targetWidget &&
+                        sourceWidget !==
+                            targetWidget
+                    ) {
+                        this.addConnection(
+                            sourceWidget,
+                            targetWidget
+                        );
+                    }
+                }
+            );
+        }
+
         if (
             typeof workflowData.zoom ===
             "number"
@@ -1799,7 +1806,14 @@ class Board {
                 (widget) => {
                     return widget.toJSON();
                 }
-            )
+            ),
+
+            connections:
+                this.connections.map(
+                    (connection) => {
+                        return connection.toJSON();
+                    }
+                )
         };
     }
 
@@ -2291,6 +2305,8 @@ class Board {
             connection
         );
 
+        this.scheduleSave();
+
         return connection;
     }
 
@@ -2378,6 +2394,8 @@ class Board {
             connectionIndex,
             1
         );
+
+        this.scheduleSave();
     }
 
     removeConnectionsForWidget(
