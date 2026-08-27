@@ -611,6 +611,10 @@ button {
         non-scaling-stroke;
 }
 
+.connection-arrow-shape {
+    fill: #64748b;
+}
+
 .connection-preview {
     stroke: #2563eb;
 

@@ -15,6 +15,15 @@ class Widget {
         this.outputPortElement = null;
 
         this.isDragging = false;
+
+        this.dragPointerStartX = 0;
+        this.dragPointerStartY = 0;
+
+        this.broughtToFrontThisDrag =
+            false;
+
+        this.zIndex = null;
+
         this.dragOffsetX = 0;
         this.dragOffsetY = 0;
     }
@@ -191,6 +200,16 @@ class Widget {
         this.dragOffsetY = pointer.y - this.y;
 
         this.isDragging = true;
+
+        this.dragPointerStartX =
+            event.clientX;
+
+        this.dragPointerStartY =
+            event.clientY;
+
+        this.broughtToFrontThisDrag =
+            false;
+
         this.element.classList.add("dragging");
 
         this.element.setPointerCapture(event.pointerId);
@@ -199,6 +218,38 @@ class Widget {
     drag(event) {
         if (!this.isDragging) {
             return;
+        }
+
+        /*
+        * Selection and stacking are separate.
+        *
+        * Only bring this widget to the front
+        * after the pointer has actually moved
+        * at least 4 screen pixels.
+        */
+        if (!this.broughtToFrontThisDrag) {
+            const movementX =
+                event.clientX -
+                this.dragPointerStartX;
+
+            const movementY =
+                event.clientY -
+                this.dragPointerStartY;
+
+            const movementDistance =
+                Math.hypot(
+                    movementX,
+                    movementY
+                );
+
+            if (movementDistance >= 4) {
+                this.board.bringWidgetToFront(
+                    this
+                );
+
+                this.broughtToFrontThisDrag =
+                    true;
+            }
         }
 
         const pointer = this.board.screenToWorkspace(
@@ -239,6 +290,9 @@ class Widget {
 
         this.board.updateStats();
         this.board.scheduleSave();
+
+        this.broughtToFrontThisDrag =
+            false;
     }
 
     updatePosition() {
@@ -335,13 +389,63 @@ class Widget {
         );
     }
 
+    getBounds() {
+        if (!this.element) {
+            return null;
+        }
+
+        const rect =
+            this.element.getBoundingClientRect();
+
+        const topLeft =
+            this.board.screenToWorkspace(
+                rect.left,
+                rect.top
+            );
+
+        const bottomRight =
+            this.board.screenToWorkspace(
+                rect.right,
+                rect.bottom
+            );
+
+        return {
+            left: topLeft.x,
+            top: topLeft.y,
+
+            right: bottomRight.x,
+            bottom: bottomRight.y,
+
+            width:
+                bottomRight.x -
+                topLeft.x,
+
+            height:
+                bottomRight.y -
+                topLeft.y,
+
+            centerX:
+                (
+                    topLeft.x +
+                    bottomRight.x
+                ) / 2,
+
+            centerY:
+                (
+                    topLeft.y +
+                    bottomRight.y
+                ) / 2
+        };
+    }
+
     toJSON() {
         return {
             id: this.id,
             title: this.title,
             type: this.type,
             x: this.x,
-            y: this.y
+            y: this.y,
+            zIndex: this.zIndex
         };
     }
 }

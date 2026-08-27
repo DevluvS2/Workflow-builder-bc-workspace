@@ -5,6 +5,8 @@ class Board {
         this.widgets = [];
         this.selectedWidget = null;
 
+        this.nextWidgetZIndex = 3;
+
         this.connections = [];
         this.nextConnectionNumber = 1;
 
@@ -355,6 +357,84 @@ class Board {
             String(this.workspaceHeight)
         );
 
+        /*
+        * SVG definitions let us create reusable
+        * graphics such as arrowheads.
+        */
+        const definitions =
+            document.createElementNS(
+                svgNamespace,
+                "defs"
+            );
+
+        const arrowMarker =
+            document.createElementNS(
+                svgNamespace,
+                "marker"
+            );
+
+        arrowMarker.setAttribute(
+            "id",
+            "connection-arrow"
+        );
+
+        arrowMarker.setAttribute(
+            "viewBox",
+            "0 0 10 10"
+        );
+
+        arrowMarker.setAttribute(
+            "refX",
+            "9"
+        );
+
+        arrowMarker.setAttribute(
+            "refY",
+            "5"
+        );
+
+        arrowMarker.setAttribute(
+            "markerWidth",
+            "7"
+        );
+
+        arrowMarker.setAttribute(
+            "markerHeight",
+            "7"
+        );
+
+        arrowMarker.setAttribute(
+            "orient",
+            "auto-start-reverse"
+        );
+
+        const arrowPath =
+            document.createElementNS(
+                svgNamespace,
+                "path"
+            );
+
+        arrowPath.setAttribute(
+            "d",
+            "M 0 0 L 10 5 L 0 10 z"
+        );
+
+        arrowPath.classList.add(
+            "connection-arrow-shape"
+        );
+
+        arrowMarker.appendChild(
+            arrowPath
+        );
+
+        definitions.appendChild(
+            arrowMarker
+        );
+
+        connectionLayer.appendChild(
+            definitions
+        );
+
         workspace.appendChild(
             connectionLayer
         );
@@ -536,6 +616,29 @@ class Board {
     addWidget(widget) {
         const widgetElement = widget.render();
 
+        if (
+            typeof widget.zIndex !== "number"
+        ) {
+            widget.zIndex =
+                this.nextWidgetZIndex;
+
+            this.nextWidgetZIndex += 1;
+        } else {
+            /*
+            * If we're restoring a saved widget,
+            * make sure future z-index values stay
+            * above the restored value.
+            */
+            this.nextWidgetZIndex =
+                Math.max(
+                    this.nextWidgetZIndex,
+                    widget.zIndex + 1
+                );
+        }
+
+        widgetElement.style.zIndex =
+            String(widget.zIndex);
+
         this.workspace.appendChild(widgetElement);
         this.widgets.push(widget);
 
@@ -569,6 +672,25 @@ class Board {
 
         this.updateStats();
         this.updateWorkflowMap();
+        this.scheduleSave();
+    }
+
+    bringWidgetToFront(widget) {
+        if (
+            !widget ||
+            !widget.element
+        ) {
+            return;
+        }
+
+        widget.zIndex =
+            this.nextWidgetZIndex;
+
+        this.nextWidgetZIndex += 1;
+
+        widget.element.style.zIndex =
+            String(widget.zIndex);
+
         this.scheduleSave();
     }
 
@@ -887,6 +1009,8 @@ class Board {
         this.connections = [];
 
         this.nextConnectionNumber = 1;
+
+        this.nextWidgetZIndex = 3;
 
         this.connectionSourceWidget = null;
         this.connectionPreviewElement = null;
@@ -1590,6 +1714,14 @@ class Board {
                     widgetData.y
                 );
 
+                if (
+                    typeof widgetData.zIndex ===
+                    "number"
+                ) {
+                    widget.zIndex =
+                        widgetData.zIndex;
+                }
+
                 this.addWidget(widget);
             }
         );
@@ -2072,6 +2204,8 @@ class Board {
                     rect.top +
                         rect.height / 2
                 );
+
+            targetPoint.x -= 8;
         } else {
             targetPoint =
                 this.screenToWorkspace(
