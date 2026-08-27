@@ -1476,6 +1476,26 @@ class Board {
 
         if (
             event.key === "Delete" &&
+            this.selectedConnection
+        ) {
+            event.preventDefault();
+
+            const confirmed =
+                window.confirm(
+                    `Delete connection from "${this.selectedConnection.sourceWidget.title}" to "${this.selectedConnection.targetWidget.title}"?`
+                );
+
+            if (confirmed) {
+                this.removeConnection(
+                    this.selectedConnection
+                );
+            }
+
+            return;
+        }
+
+        if (
+            event.key === "Delete" &&
             this.selectedWidget
         ) {
             event.preventDefault();
@@ -1491,6 +1511,7 @@ class Board {
     }
 
     selectWidget(widget) {
+        this.clearConnectionSelection();
         this.widgets.forEach((currentWidget) => {
             currentWidget.setSelected(currentWidget === widget);
         });
@@ -1504,6 +1525,67 @@ class Board {
         }
 
         this.updateStats();
+    }
+
+    selectConnection(connection) {
+        /*
+        * Remove old connection selection.
+        */
+        this.clearConnectionSelection();
+
+
+        /*
+        * Deselect every widget WITHOUT calling
+        * selectWidget(), because selectWidget()
+        * itself clears connection selection.
+        */
+        this.widgets.forEach(
+            (widget) => {
+                widget.setSelected(false);
+            }
+        );
+
+        this.selectedWidget = null;
+
+
+        if (!connection) {
+            this.showNoSelectionMessage();
+            this.updateStats();
+
+            return;
+        }
+
+
+        this.selectedConnection =
+            connection;
+
+
+        if (connection.element) {
+            connection.element.classList.add(
+                "connection-selected"
+            );
+        }
+
+
+        this.showConnectionProperties(
+            connection
+        );
+
+        this.updateStats();
+    }
+
+    clearConnectionSelection() {
+        if (
+            this.selectedConnection &&
+            this.selectedConnection.element
+        ) {
+            this.selectedConnection.element
+                .classList.remove(
+                    "connection-selected"
+                );
+        }
+
+        this.selectedConnection = null;
     }
 
     showNoSelectionMessage() {
@@ -1589,6 +1671,130 @@ class Board {
         this.propertiesPanelContent.appendChild(typeRow);
         this.propertiesPanelContent.appendChild(positionRow);
         this.propertiesPanelContent.appendChild(actions);
+    }
+
+    showConnectionProperties(
+        connection
+    ) {
+        if (
+            !this.propertiesPanelContent ||
+            !connection
+        ) {
+            return;
+        }
+
+
+        this.propertiesPanelContent.innerHTML =
+            "";
+
+
+        const description =
+            document.createElement("p");
+
+        description.className =
+            "panel-description";
+
+        description.textContent =
+            "Workflow Connection";
+
+
+        const fromRow =
+            document.createElement("div");
+
+        fromRow.className =
+            "property-row";
+
+
+        const fromLabel =
+            document.createElement("label");
+
+        fromLabel.textContent =
+            "From";
+
+
+        const fromValue =
+            document.createElement("div");
+
+        fromValue.textContent =
+            connection.sourceWidget.title;
+
+
+        fromRow.appendChild(fromLabel);
+        fromRow.appendChild(fromValue);
+
+
+        const toRow =
+            document.createElement("div");
+
+        toRow.className =
+            "property-row";
+
+
+        const toLabel =
+            document.createElement("label");
+
+        toLabel.textContent =
+            "To";
+
+
+        const toValue =
+            document.createElement("div");
+
+        toValue.textContent =
+            connection.targetWidget.title;
+
+
+        toRow.appendChild(toLabel);
+        toRow.appendChild(toValue);
+
+
+        const actions =
+            document.createElement("div");
+
+        actions.className =
+            "property-actions";
+
+
+        const deleteButton =
+            document.createElement("button");
+
+        deleteButton.className =
+            "delete-button";
+
+        deleteButton.textContent =
+            "Delete Connection";
+
+
+        deleteButton.addEventListener(
+            "click",
+            () => {
+                this.removeConnection(
+                    connection
+                );
+            }
+        );
+
+
+        actions.appendChild(
+            deleteButton
+        );
+
+
+        this.propertiesPanelContent.appendChild(
+            description
+        );
+
+        this.propertiesPanelContent.appendChild(
+            fromRow
+        );
+
+        this.propertiesPanelContent.appendChild(
+            toRow
+        );
+
+        this.propertiesPanelContent.appendChild(
+            actions
+        );
     }
 
     togglePanel(side) {
@@ -1774,6 +1980,8 @@ class Board {
 
         this.connections = [];
 
+        this.selectedConnection = null;
+
         this.nextConnectionNumber = 1;
 
         this.nextWidgetZIndex = 3;
@@ -1908,6 +2116,9 @@ class Board {
         if (this.selectedWidget) {
             this.positionElement.textContent =
                 `Selected: ${this.selectedWidget.title}`;
+        } else if (this.selectedConnection) {
+            this.positionElement.textContent =
+                `Selected: ${this.selectedConnection.sourceWidget.title} → ${this.selectedConnection.targetWidget.title}`;
         } else {
             this.positionElement.textContent =
                 `Zoom: ${Math.round(this.zoom * 100)}%`;
@@ -2846,6 +3057,70 @@ class Board {
         this.contextMenu = menu;
     }
 
+    showConnectionContextMenu(
+        connection,
+        clientX,
+        clientY
+    ) {
+        this.hideContextMenu();
+
+        this.selectConnection(
+            connection
+        );
+
+
+        const menu =
+            document.createElement("div");
+
+        menu.className =
+            "widget-context-menu";
+
+        menu.style.left =
+            `${clientX}px`;
+
+        menu.style.top =
+            `${clientY}px`;
+
+
+        const deleteButton =
+            document.createElement("button");
+
+        deleteButton.textContent =
+            "Delete Connection";
+
+
+        deleteButton.addEventListener(
+            "click",
+            () => {
+                const confirmed =
+                    window.confirm(
+                        `Delete connection from "${connection.sourceWidget.title}" to "${connection.targetWidget.title}"?`
+                    );
+
+                if (confirmed) {
+                    this.removeConnection(
+                        connection
+                    );
+                }
+
+                this.hideContextMenu();
+            }
+        );
+
+
+        menu.appendChild(
+            deleteButton
+        );
+
+
+        document.body.appendChild(
+            menu
+        );
+
+        this.contextMenu =
+            menu;
+    }
+
     openWidgetProperties(widget) {
         this.selectWidget(widget);
 
@@ -3296,12 +3571,26 @@ class Board {
             );
         this.updateConnectionPeek();
 
+        const wasSelected =
+            this.selectedConnection ===
+            connection;
+
+        if (wasSelected) {
+            this.selectedConnection =
+                null;
+        }
+
         connection.remove();
 
         this.connections.splice(
             connectionIndex,
             1
         );
+
+        if (wasSelected) {
+            this.showNoSelectionMessage();
+            this.updateStats();
+        }
 
         this.scheduleSave();
     }

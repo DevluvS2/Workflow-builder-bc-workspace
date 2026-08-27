@@ -791,3 +791,14 @@ button {
 
     z-index: 20;
 }
+
+.workflow-connection.connection-selected {
+    stroke: #2563eb;
+    stroke-width: 4;
+
+    filter:
+        drop-shadow(
+            0 0 3px
+            rgb(37 99 235 / 35%)
+        );
+}

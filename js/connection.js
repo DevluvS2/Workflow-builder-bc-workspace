@@ -105,6 +105,32 @@ class Connection {
             }
         );
 
+        hitPath.addEventListener(
+            "click",
+            (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+
+                this.board.selectConnection(
+                    this
+                );
+            }
+        );
+
+        hitPath.addEventListener(
+            "contextmenu",
+            (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+
+                this.board.showConnectionContextMenu(
+                    this,
+                    event.clientX,
+                    event.clientY
+                );
+            }
+        );
+
 
         group.appendChild(path);
         group.appendChild(hitPath);
