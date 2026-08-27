@@ -694,6 +694,204 @@ class Board {
         this.scheduleSave();
     }
 
+    getWidgetZIndex(widget) {
+        if (
+            !widget ||
+            typeof widget.zIndex !== "number"
+        ) {
+            return 2;
+        }
+
+        return widget.zIndex;
+    }
+
+    getOverlapRect(
+        widgetA,
+        widgetB
+    ) {
+        if (
+            !widgetA ||
+            !widgetB ||
+            typeof widgetA.getBounds !==
+                "function" ||
+            typeof widgetB.getBounds !==
+                "function"
+        ) {
+            return null;
+        }
+
+        const boundsA =
+            widgetA.getBounds();
+
+        const boundsB =
+            widgetB.getBounds();
+
+        if (
+            !boundsA ||
+            !boundsB
+        ) {
+            return null;
+        }
+
+        const left =
+            Math.max(
+                boundsA.left,
+                boundsB.left
+            );
+
+        const right =
+            Math.min(
+                boundsA.right,
+                boundsB.right
+            );
+
+        const top =
+            Math.max(
+                boundsA.top,
+                boundsB.top
+            );
+
+        const bottom =
+            Math.min(
+                boundsA.bottom,
+                boundsB.bottom
+            );
+
+
+        /*
+        * No positive-width/height intersection
+        * means the widgets do not overlap.
+        */
+        if (
+            right <= left ||
+            bottom <= top
+        ) {
+            return null;
+        }
+
+
+        const width =
+            right - left;
+
+        const height =
+            bottom - top;
+
+
+        return {
+            left,
+            right,
+            top,
+            bottom,
+
+            width,
+            height,
+
+            area:
+                width * height
+        };
+    }
+
+    widgetsOverlap(
+        widgetA,
+        widgetB
+    ) {
+        return (
+            this.getOverlapRect(
+                widgetA,
+                widgetB
+            ) !== null
+        );
+    }
+
+    getOverlappingWidgets(widget) {
+        return this.widgets
+            .filter(
+                (otherWidget) => {
+                    return (
+                        otherWidget !== widget &&
+                        this.widgetsOverlap(
+                            widget,
+                            otherWidget
+                        )
+                    );
+                }
+            )
+            .map(
+                (otherWidget) => {
+                    return {
+                        widget:
+                            otherWidget,
+
+                        overlap:
+                            this.getOverlapRect(
+                                widget,
+                                otherWidget
+                            ),
+
+                        zIndex:
+                            this.getWidgetZIndex(
+                                otherWidget
+                            )
+                    };
+                }
+            )
+            .sort(
+                (a, b) =>
+                    b.zIndex -
+                    a.zIndex
+            );
+    }
+
+    getCoveringWidgets(widget) {
+        const widgetZIndex =
+            this.getWidgetZIndex(
+                widget
+            );
+
+        return this
+            .getOverlappingWidgets(
+                widget
+            )
+            .filter(
+                (overlapInfo) => {
+                    return (
+                        overlapInfo.zIndex >
+                        widgetZIndex
+                    );
+                }
+            );
+    }
+
+    getTopWidget(
+        widgetA,
+        widgetB
+    ) {
+        if (
+            !this.widgetsOverlap(
+                widgetA,
+                widgetB
+            )
+        ) {
+            return null;
+        }
+
+        const zA =
+            this.getWidgetZIndex(
+                widgetA
+            );
+
+        const zB =
+            this.getWidgetZIndex(
+                widgetB
+            );
+
+        return (
+            zA >= zB
+                ? widgetA
+                : widgetB
+        );
+    }
+
     handleKeyDown(event) {
         /*
         * Do not delete widgets while the user is typing
