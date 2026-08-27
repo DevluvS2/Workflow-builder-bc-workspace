@@ -41,13 +41,29 @@ class Widget {
         this.lastError = "";
 
         /*
+         * Decision-node branching configuration.
+         *
+         * Decision widgets evaluate a safe expression and then activate
+         * exactly one configured output branch. The selected branch can
+         * forward the first input value, the Boolean condition result, or
+         * an object containing every named input.
+         */
+        this.decisionExpression = "value";
+        this.decisionTrueOutputId = null;
+        this.decisionFalseOutputId = null;
+        this.decisionPayloadMode = "first-input";
+        this.lastDecisionResult = null;
+
+        /*
          * Script configuration. The Board owns execution.
          * Bash/Python/JavaScript are intentionally interpreted
          * by the local workflow simulator rather than executed
          * as unrestricted system processes.
          */
         this.language =
-            type === "Start" || type === "End"
+            type === "Start" ||
+            type === "End" ||
+            type === "Decision"
                 ? "Pass-through"
                 : "Expression";
 
@@ -88,6 +104,40 @@ class Widget {
             return;
         }
 
+        if (this.type === "Decision") {
+            this.inputs = [
+                this.createPortRecord(
+                    "input",
+                    "value"
+                )
+            ];
+
+            const trueOutput =
+                this.createPortRecord(
+                    "output",
+                    "true"
+                );
+
+            const falseOutput =
+                this.createPortRecord(
+                    "output",
+                    "false"
+                );
+
+            this.outputs = [
+                trueOutput,
+                falseOutput
+            ];
+
+            this.decisionTrueOutputId =
+                trueOutput.id;
+
+            this.decisionFalseOutputId =
+                falseOutput.id;
+
+            return;
+        }
+
         this.inputs = [
             this.createPortRecord(
                 "input",
@@ -98,9 +148,7 @@ class Widget {
         this.outputs = [
             this.createPortRecord(
                 "output",
-                this.type === "Decision"
-                    ? "result"
-                    : "result"
+                "result"
             )
         ];
     }
@@ -327,7 +375,70 @@ class Widget {
                 String(data.lastError);
         }
 
+        if (
+            data.decisionExpression !==
+            undefined
+        ) {
+            this.decisionExpression =
+                String(
+                    data.decisionExpression
+                );
+        }
+
+        if (
+            data.decisionTrueOutputId !==
+            undefined
+        ) {
+            this.decisionTrueOutputId =
+                data.decisionTrueOutputId
+                    ? String(
+                        data.decisionTrueOutputId
+                    )
+                    : null;
+        }
+
+        if (
+            data.decisionFalseOutputId !==
+            undefined
+        ) {
+            this.decisionFalseOutputId =
+                data.decisionFalseOutputId
+                    ? String(
+                        data.decisionFalseOutputId
+                    )
+                    : null;
+        }
+
+        if (
+            [
+                "first-input",
+                "condition-result",
+                "input-object"
+            ].includes(
+                data.decisionPayloadMode
+            )
+        ) {
+            this.decisionPayloadMode =
+                data.decisionPayloadMode;
+        }
+
+        if (
+            typeof data.lastDecisionResult ===
+            "boolean"
+        ) {
+            this.lastDecisionResult =
+                data.lastDecisionResult;
+        } else {
+            this.lastDecisionResult = null;
+        }
+
         this.ensurePortCounter();
+
+        if (this.type === "Decision") {
+            this.ensureDecisionConfiguration(
+                true
+            );
+        }
 
         if (this.element) {
             this.refreshContent();
@@ -393,6 +504,23 @@ class Widget {
                 this.title;
         }
 
+        this.element.dataset.widgetType =
+            this.type;
+
+        if (
+            this.type === "Decision" &&
+            typeof this.lastDecisionResult ===
+                "boolean"
+        ) {
+            this.element.dataset.decisionResult =
+                this.lastDecisionResult
+                    ? "true"
+                    : "false";
+        } else {
+            delete this.element.dataset
+                .decisionResult;
+        }
+
         this.renderIoRows();
         this.updateStatusDisplay();
 
@@ -434,6 +562,60 @@ class Widget {
                 row.dataset.portId =
                     port.id;
 
+                let decisionBranchRole =
+                    null;
+
+                if (
+                    this.type === "Decision" &&
+                    direction === "output"
+                ) {
+                    if (
+                        port.id ===
+                        this.decisionTrueOutputId
+                    ) {
+                        decisionBranchRole =
+                            "true";
+                    } else if (
+                        port.id ===
+                        this.decisionFalseOutputId
+                    ) {
+                        decisionBranchRole =
+                            "false";
+                    }
+
+                    if (decisionBranchRole) {
+                        row.classList.add(
+                            `decision-${decisionBranchRole}-output`
+                        );
+
+                        row.dataset.branchRole =
+                            decisionBranchRole;
+
+                        if (
+                            typeof this.lastDecisionResult ===
+                                "boolean"
+                        ) {
+                            const selected =
+                                (
+                                    decisionBranchRole ===
+                                        "true" &&
+                                    this.lastDecisionResult
+                                ) ||
+                                (
+                                    decisionBranchRole ===
+                                        "false" &&
+                                    !this.lastDecisionResult
+                                );
+
+                            row.classList.add(
+                                selected
+                                    ? "decision-branch-selected"
+                                    : "decision-branch-not-selected"
+                            );
+                        }
+                    }
+                }
+
                 const text =
                     document.createElement(
                         "span"
@@ -441,6 +623,26 @@ class Widget {
 
                 text.className =
                     "widget-io-text";
+
+                if (decisionBranchRole) {
+                    const branchBadge =
+                        document.createElement(
+                            "span"
+                        );
+
+                    branchBadge.className =
+                        `widget-branch-badge branch-${decisionBranchRole}`;
+
+                    branchBadge.textContent =
+                        decisionBranchRole ===
+                        "true"
+                            ? "TRUE"
+                            : "FALSE";
+
+                    row.appendChild(
+                        branchBadge
+                    );
+                }
 
                 const prefix =
                     direction === "input"
@@ -620,7 +822,8 @@ class Widget {
             "running",
             "finished",
             "error",
-            "stopped"
+            "stopped",
+            "skipped"
         ];
 
         allowedStatuses.forEach(
@@ -654,6 +857,15 @@ class Widget {
             `status: ${normalizedStatus}` +
             `  ·  ${Math.round(this.runtimeMs)} ms` +
             `  ·  ${this.memoryKb.toFixed(1)} KB`;
+
+        if (
+            this.type === "Decision" &&
+            typeof this.lastDecisionResult ===
+                "boolean"
+        ) {
+            text +=
+                `  ·  branch: ${this.lastDecisionResult ? "TRUE" : "FALSE"}`;
+        }
 
         if (
             normalizedStatus === "error" &&
@@ -1098,6 +1310,24 @@ class Widget {
         }
 
         this.type = trimmedType;
+
+        if (this.type === "Decision") {
+            this.ensureDecisionConfiguration(
+                true
+            );
+
+            if (
+                !this.language ||
+                this.language === "Expression"
+            ) {
+                this.language =
+                    "Pass-through";
+            }
+        } else {
+            this.lastDecisionResult = null;
+        }
+
+        this.refreshContent();
         this.board.scheduleSave();
     }
 
@@ -1202,6 +1432,98 @@ class Widget {
                     bottomRight.y
                 ) / 2
         };
+    }
+
+
+    ensureDecisionConfiguration(
+        addMissingOutputs = false
+    ) {
+        if (this.type !== "Decision") {
+            return;
+        }
+
+        if (addMissingOutputs) {
+            this.ensurePortCounter();
+
+            while (this.outputs.length < 2) {
+                const defaultName =
+                    this.outputs.length === 0
+                        ? "true"
+                        : "false";
+
+                this.outputs.push(
+                    this.createPortRecord(
+                        "output",
+                        defaultName
+                    )
+                );
+            }
+        }
+
+        const outputIds =
+            new Set(
+                this.outputs.map(
+                    (output) => output.id
+                )
+            );
+
+        if (
+            !this.decisionTrueOutputId ||
+            !outputIds.has(
+                this.decisionTrueOutputId
+            )
+        ) {
+            this.decisionTrueOutputId =
+                this.outputs[0]
+                    ? this.outputs[0].id
+                    : null;
+        }
+
+        if (
+            !this.decisionFalseOutputId ||
+            !outputIds.has(
+                this.decisionFalseOutputId
+            ) ||
+            this.decisionFalseOutputId ===
+                this.decisionTrueOutputId
+        ) {
+            const alternate =
+                this.outputs.find(
+                    (output) =>
+                        output.id !==
+                        this.decisionTrueOutputId
+                );
+
+            this.decisionFalseOutputId =
+                alternate
+                    ? alternate.id
+                    : null;
+        }
+    }
+
+    getDecisionTrueOutput() {
+        return this.getOutputById(
+            this.decisionTrueOutputId
+        );
+    }
+
+    getDecisionFalseOutput() {
+        return this.getOutputById(
+            this.decisionFalseOutputId
+        );
+    }
+
+    getDecisionSelectedOutput() {
+        if (
+            typeof this.lastDecisionResult !==
+            "boolean"
+        ) {
+            return null;
+        }
+
+        return this.lastDecisionResult
+            ? this.getDecisionTrueOutput()
+            : this.getDecisionFalseOutput();
     }
 
 
@@ -1461,6 +1783,21 @@ class Widget {
 
             source:
                 this.source,
+
+            decisionExpression:
+                this.decisionExpression,
+
+            decisionTrueOutputId:
+                this.decisionTrueOutputId,
+
+            decisionFalseOutputId:
+                this.decisionFalseOutputId,
+
+            decisionPayloadMode:
+                this.decisionPayloadMode,
+
+            lastDecisionResult:
+                this.lastDecisionResult,
 
             executionDelayMs:
                 this.executionDelayMs,

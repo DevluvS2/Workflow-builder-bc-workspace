@@ -96,6 +96,17 @@ class Board {
         };
 
         /*
+         * Runtime branch-state map.
+         *
+         * Every connection is marked active/inactive as its source node
+         * executes. Decision widgets activate only the selected output
+         * branch; skipped nodes propagate inactivity downstream.
+         */
+        this.branchConnectionStates =
+            new Map();
+        this.hasBranchExecutionState = false;
+
+        /*
          * Bottom execution console.
          *
          * Logs are intentionally session-only. They describe what happened
@@ -3170,7 +3181,8 @@ class Board {
 
     refreshInputValueFromConnections(
         widget,
-        inputPortId
+        inputPortId,
+        { activeOnly = false } = {}
     ) {
         if (!widget) {
             return "";
@@ -3185,15 +3197,37 @@ class Board {
             return "";
         }
 
-        const incomingConnections =
+        const allIncomingConnections =
             this.getIncomingConnections(
                 widget,
                 inputPortId
             );
 
+        const incomingConnections =
+            activeOnly
+                ? allIncomingConnections.filter(
+                    (connection) =>
+                        this.getConnectionBranchState(
+                            connection
+                        ) === "active"
+                )
+                : allIncomingConnections;
+
         if (
             incomingConnections.length === 0
         ) {
+            if (
+                activeOnly &&
+                allIncomingConnections.length > 0 &&
+                String(
+                    input.manualValue ?? ""
+                ).trim() === ""
+            ) {
+                input.value = "";
+                widget.refreshContent();
+                return input.value;
+            }
+
             try {
                 input.value =
                     this.coerceValueForPort(
@@ -3268,7 +3302,8 @@ class Board {
 
     propagateOutputValue(
         sourceWidget,
-        outputPortId
+        outputPortId,
+        { activeOnly = false } = {}
     ) {
         if (!sourceWidget) {
             return;
@@ -3286,7 +3321,15 @@ class Board {
         this.getOutgoingConnections(
             sourceWidget,
             outputPortId
-        ).forEach(
+        )
+            .filter(
+                (connection) =>
+                    !activeOnly ||
+                    this.getConnectionBranchState(
+                        connection
+                    ) === "active"
+            )
+            .forEach(
             (connection) => {
                 const targetInput =
                     connection.targetWidget
@@ -3297,7 +3340,10 @@ class Board {
                 if (targetInput) {
                     this.refreshInputValueFromConnections(
                         connection.targetWidget,
-                        connection.targetPortId
+                        connection.targetPortId,
+                        {
+                            activeOnly
+                        }
                     );
                 }
             }
@@ -3505,6 +3551,16 @@ class Board {
 
         this.recordHistoryState();
         widget.addOutput();
+
+        if (widget.type === "Decision") {
+            widget.ensureDecisionConfiguration(
+                false
+            );
+            this.clearBranchExecutionState({
+                clearDecisionResults: true
+            });
+        }
+
         this.showWidgetProperties(widget);
         this.scheduleSave();
     }
@@ -3585,6 +3641,12 @@ class Board {
             outputPortId
         );
 
+        if (widget.type === "Decision") {
+            widget.ensureDecisionConfiguration(
+                false
+            );
+        }
+
         this.showWidgetProperties(widget);
         this.scheduleSave();
     }
@@ -3595,6 +3657,13 @@ class Board {
             !widget
         ) {
             return;
+        }
+
+        if (widget.type === "Decision") {
+            widget.ensureDecisionConfiguration(
+                true
+            );
+            widget.refreshContent();
         }
 
         this.propertiesPanelContent.innerHTML = "";
@@ -4557,8 +4626,21 @@ class Board {
                             ).compatible
                     ).length;
 
+                const branchRole =
+                    widget.type === "Decision"
+                        ? (
+                            output.id ===
+                                widget.decisionTrueOutputId
+                                ? "TRUE branch · "
+                                : output.id ===
+                                    widget.decisionFalseOutputId
+                                    ? "FALSE branch · "
+                                    : "Unassigned branch · "
+                        )
+                        : "";
+
                 outputMeta.textContent =
-                    `${this.getPortDataType(output)} · ${connectionCount} downstream connection${connectionCount === 1 ? "" : "s"}${incompatibleCount > 0 ? ` · ${incompatibleCount} incompatible` : ""}`;
+                    `${branchRole}${this.getPortDataType(output)} · ${connectionCount} downstream connection${connectionCount === 1 ? "" : "s"}${incompatibleCount > 0 ? ` · ${incompatibleCount} incompatible` : ""}`;
 
                 const removeButton =
                     document.createElement(
@@ -4569,6 +4651,15 @@ class Board {
                     "io-remove-button";
                 removeButton.textContent =
                     "Remove";
+
+                if (
+                    widget.type === "Decision" &&
+                    widget.outputs.length <= 2
+                ) {
+                    removeButton.disabled = true;
+                    removeButton.title =
+                        "Decision widgets require at least two outputs for TRUE and FALSE branches.";
+                }
 
                 removeButton.addEventListener(
                     "click",
@@ -4614,6 +4705,372 @@ class Board {
 
 
         /* =============================
+         * Decision branching
+         * ============================= */
+        if (widget.type === "Decision") {
+            widget.ensureDecisionConfiguration(
+                true
+            );
+
+            const decisionSection =
+                this.createPropertiesSection(
+                    "Decision Branching",
+                    "Evaluate a Boolean condition and activate exactly one output branch. Downstream nodes on the other branch are skipped automatically."
+                );
+
+            const conditionRow =
+                document.createElement(
+                    "div"
+                );
+            conditionRow.className =
+                "property-row";
+
+            const conditionLabel =
+                document.createElement(
+                    "label"
+                );
+            conditionLabel.textContent =
+                "Condition";
+
+            const conditionInput =
+                document.createElement(
+                    "textarea"
+                );
+            conditionInput.className =
+                "decision-condition-input";
+            conditionInput.rows = 3;
+            conditionInput.value =
+                widget.decisionExpression ||
+                "value";
+            conditionInput.placeholder =
+                "value > 10";
+            conditionInput.title =
+                "Use the same safe expression syntax as Expression nodes. Input names become variables.";
+
+            conditionInput.addEventListener(
+                "change",
+                () => {
+                    const nextExpression =
+                        conditionInput.value.trim();
+
+                    if (
+                        nextExpression ===
+                        widget.decisionExpression
+                    ) {
+                        return;
+                    }
+
+                    this.recordHistoryState();
+                    widget.decisionExpression =
+                        nextExpression;
+                    widget.lastDecisionResult =
+                        null;
+                    widget.refreshContent();
+                    this.clearBranchExecutionState();
+                    this.scheduleSave();
+                }
+            );
+
+            conditionRow.appendChild(
+                conditionLabel
+            );
+            conditionRow.appendChild(
+                conditionInput
+            );
+
+            const branchGrid =
+                document.createElement(
+                    "div"
+                );
+            branchGrid.className =
+                "decision-branch-grid";
+
+            const createBranchSelector =
+                (
+                    labelText,
+                    role,
+                    currentOutputId,
+                    otherOutputId
+                ) => {
+                    const field =
+                        document.createElement(
+                            "div"
+                        );
+                    field.className =
+                        `decision-branch-field decision-${role}-field`;
+
+                    const label =
+                        document.createElement(
+                            "label"
+                        );
+                    label.textContent =
+                        labelText;
+
+                    const select =
+                        document.createElement(
+                            "select"
+                        );
+
+                    widget.outputs.forEach(
+                        (output) => {
+                            const option =
+                                document.createElement(
+                                    "option"
+                                );
+                            option.value =
+                                output.id;
+                            option.textContent =
+                                `${output.name} [${this.getPortDataType(output)}]`;
+                            option.disabled =
+                                output.id ===
+                                    otherOutputId;
+                            select.appendChild(
+                                option
+                            );
+                        }
+                    );
+
+                    select.value =
+                        currentOutputId || "";
+
+                    select.addEventListener(
+                        "change",
+                        () => {
+                            this.recordHistoryState();
+
+                            if (role === "true") {
+                                widget.decisionTrueOutputId =
+                                    select.value;
+                            } else {
+                                widget.decisionFalseOutputId =
+                                    select.value;
+                            }
+
+                            widget.lastDecisionResult =
+                                null;
+                            widget.ensureDecisionConfiguration(
+                                false
+                            );
+                            widget.refreshContent();
+                            this.clearBranchExecutionState();
+                            this.showWidgetProperties(
+                                widget
+                            );
+                            this.scheduleSave();
+                        }
+                    );
+
+                    field.appendChild(label);
+                    field.appendChild(select);
+                    return field;
+                };
+
+            branchGrid.appendChild(
+                createBranchSelector(
+                    "TRUE output",
+                    "true",
+                    widget.decisionTrueOutputId,
+                    widget.decisionFalseOutputId
+                )
+            );
+
+            branchGrid.appendChild(
+                createBranchSelector(
+                    "FALSE output",
+                    "false",
+                    widget.decisionFalseOutputId,
+                    widget.decisionTrueOutputId
+                )
+            );
+
+            const payloadRow =
+                document.createElement(
+                    "div"
+                );
+            payloadRow.className =
+                "property-row";
+
+            const payloadLabel =
+                document.createElement(
+                    "label"
+                );
+            payloadLabel.textContent =
+                "Value sent down selected branch";
+
+            const payloadSelect =
+                document.createElement(
+                    "select"
+                );
+
+            [
+                [
+                    "first-input",
+                    "First input value"
+                ],
+                [
+                    "condition-result",
+                    "Boolean condition result"
+                ],
+                [
+                    "input-object",
+                    "All named inputs as JSON object"
+                ]
+            ].forEach(
+                ([value, label]) => {
+                    const option =
+                        document.createElement(
+                            "option"
+                        );
+                    option.value = value;
+                    option.textContent = label;
+                    payloadSelect.appendChild(
+                        option
+                    );
+                }
+            );
+
+            payloadSelect.value =
+                widget.decisionPayloadMode ||
+                "first-input";
+
+            payloadSelect.addEventListener(
+                "change",
+                () => {
+                    if (
+                        payloadSelect.value ===
+                        widget.decisionPayloadMode
+                    ) {
+                        return;
+                    }
+
+                    this.recordHistoryState();
+                    widget.decisionPayloadMode =
+                        payloadSelect.value;
+                    widget.lastDecisionResult =
+                        null;
+                    widget.refreshContent();
+                    this.clearBranchExecutionState();
+                    this.scheduleSave();
+                }
+            );
+
+            payloadRow.appendChild(
+                payloadLabel
+            );
+            payloadRow.appendChild(
+                payloadSelect
+            );
+
+            const currentResult =
+                document.createElement(
+                    "div"
+                );
+            currentResult.className =
+                "decision-current-result";
+
+            if (
+                typeof widget.lastDecisionResult ===
+                    "boolean"
+            ) {
+                const selectedOutput =
+                    widget.getDecisionSelectedOutput();
+
+                currentResult.classList.add(
+                    widget.lastDecisionResult
+                        ? "result-true"
+                        : "result-false"
+                );
+
+                currentResult.textContent =
+                    `Last result: ${widget.lastDecisionResult ? "TRUE" : "FALSE"}` +
+                    `${selectedOutput ? ` → ${selectedOutput.name}` : ""}`;
+            } else {
+                currentResult.textContent =
+                    "Last result: not evaluated yet";
+            }
+
+            const testButton =
+                document.createElement(
+                    "button"
+                );
+            testButton.type = "button";
+            testButton.className =
+                "decision-test-button";
+            testButton.textContent =
+                "Test Condition With Current Inputs";
+
+            testButton.addEventListener(
+                "click",
+                async () => {
+                    try {
+                        widget.inputs.forEach(
+                            (input) => {
+                                this.refreshInputValueFromConnections(
+                                    widget,
+                                    input.id
+                                );
+                            }
+                        );
+
+                        const context =
+                            this.buildInputContext(
+                                widget
+                            );
+
+                        const rawResult =
+                            this.safeEvaluateExpression(
+                                widget.decisionExpression ||
+                                    "value",
+                                context
+                            );
+
+                        const result =
+                            Boolean(rawResult);
+
+                        await this.showMessageDialog({
+                            title: "Decision Test",
+                            message:
+                                `Condition: ${widget.decisionExpression || "value"}\n\nResult: ${result ? "TRUE" : "FALSE"}\nBranch: ${result ? (widget.getDecisionTrueOutput()?.name || "TRUE output") : (widget.getDecisionFalseOutput()?.name || "FALSE output")}`,
+                            tone:
+                                result
+                                    ? "success"
+                                    : "info",
+                            confirmLabel: "Close"
+                        });
+                    } catch (error) {
+                        await this.showMessageDialog({
+                            title: "Decision Condition Error",
+                            message: error.message,
+                            tone: "error",
+                            confirmLabel: "Close"
+                        });
+                    }
+                }
+            );
+
+            decisionSection.body.appendChild(
+                conditionRow
+            );
+            decisionSection.body.appendChild(
+                branchGrid
+            );
+            decisionSection.body.appendChild(
+                payloadRow
+            );
+            decisionSection.body.appendChild(
+                currentResult
+            );
+            decisionSection.body.appendChild(
+                testButton
+            );
+
+            this.propertiesPanelContent.appendChild(
+                decisionSection.section
+            );
+        }
+
+
+        /* =============================
          * Script / transformation
          * ============================= */
         const scriptSection =
@@ -4621,6 +5078,10 @@ class Board {
                 "Script",
                 "Runs in the browser-safe workflow simulator. Bash, Python, and JavaScript syntax is interpreted locally; no operating-system commands are executed."
             );
+
+        if (widget.type === "Decision") {
+            scriptSection.section.hidden = true;
+        }
 
         const languageRow =
             document.createElement("div");
@@ -4853,6 +5314,20 @@ class Board {
             ["Inputs", String(widget.inputs.length)],
             ["Outputs", String(widget.outputs.length)]
         ];
+
+        if (widget.type === "Decision") {
+            metricValues.push([
+                "Branch",
+                typeof widget.lastDecisionResult ===
+                    "boolean"
+                    ? (
+                        widget.lastDecisionResult
+                            ? "TRUE"
+                            : "FALSE"
+                    )
+                    : "Not evaluated"
+            ]);
+        }
 
         metricValues.forEach(
             ([label, value]) => {
@@ -5612,6 +6087,23 @@ class Board {
                     ) {
                         path.classList.add(
                             "selected"
+                        );
+                    }
+
+                    const branchState =
+                        this.getConnectionBranchState(
+                            connection
+                        );
+
+                    if (branchState === "active") {
+                        path.classList.add(
+                            "branch-active"
+                        );
+                    } else if (
+                        branchState === "inactive"
+                    ) {
+                        path.classList.add(
+                            "branch-inactive"
                         );
                     }
 
@@ -6577,6 +7069,375 @@ class Board {
         }
     }
 
+    clearBranchExecutionState(
+        {
+            clearDecisionResults = false
+        } = {}
+    ) {
+        this.branchConnectionStates.clear();
+        this.hasBranchExecutionState = false;
+
+        this.connections.forEach(
+            (connection) => {
+                if (!connection.element) {
+                    return;
+                }
+
+                connection.element.classList.remove(
+                    "connection-branch-active",
+                    "connection-branch-inactive"
+                );
+            }
+        );
+
+        if (clearDecisionResults) {
+            this.widgets.forEach(
+                (widget) => {
+                    if (
+                        widget.type ===
+                        "Decision"
+                    ) {
+                        widget.lastDecisionResult =
+                            null;
+                        widget.refreshContent();
+                    }
+                }
+            );
+        }
+    }
+
+    getConnectionBranchState(
+        connection
+    ) {
+        if (!connection) {
+            return "pending";
+        }
+
+        return (
+            this.branchConnectionStates.get(
+                connection.id
+            ) || "pending"
+        );
+    }
+
+    setConnectionBranchState(
+        connection,
+        state
+    ) {
+        if (!connection) {
+            return;
+        }
+
+        const normalizedState =
+            state === "active" ||
+            state === "inactive"
+                ? state
+                : "pending";
+
+        if (normalizedState === "pending") {
+            this.branchConnectionStates.delete(
+                connection.id
+            );
+        } else {
+            this.branchConnectionStates.set(
+                connection.id,
+                normalizedState
+            );
+        }
+
+        if (!connection.element) {
+            return;
+        }
+
+        connection.element.classList.toggle(
+            "connection-branch-active",
+            normalizedState === "active"
+        );
+
+        connection.element.classList.toggle(
+            "connection-branch-inactive",
+            normalizedState === "inactive"
+        );
+    }
+
+    setWidgetOutgoingBranchStates(
+        widget,
+        {
+            activeOutputIds = null,
+            forceInactive = false
+        } = {}
+    ) {
+        const allowedOutputIds =
+            activeOutputIds
+                ? new Set(
+                    activeOutputIds
+                )
+                : null;
+
+        this.connections
+            .filter(
+                (connection) =>
+                    connection.sourceWidget ===
+                    widget
+            )
+            .forEach(
+                (connection) => {
+                    const active =
+                        !forceInactive &&
+                        (
+                            !allowedOutputIds ||
+                            allowedOutputIds.has(
+                                connection.sourcePortId
+                            )
+                        );
+
+                    this.setConnectionBranchState(
+                        connection,
+                        active
+                            ? "active"
+                            : "inactive"
+                    );
+                }
+            );
+    }
+
+    getActiveIncomingConnections(
+        widget,
+        inputPortId = null
+    ) {
+        return this.connections.filter(
+            (connection) => {
+                if (
+                    connection.targetWidget !==
+                    widget
+                ) {
+                    return false;
+                }
+
+                if (
+                    inputPortId &&
+                    connection.targetPortId !==
+                    inputPortId
+                ) {
+                    return false;
+                }
+
+                return (
+                    this.getConnectionBranchState(
+                        connection
+                    ) === "active"
+                );
+            }
+        );
+    }
+
+    shouldExecuteWidgetForBranches(
+        widget
+    ) {
+        const incomingConnections =
+            this.connections.filter(
+                (connection) =>
+                    connection.targetWidget ===
+                    widget
+            );
+
+        /*
+         * Root nodes always execute. This includes Start widgets and
+         * manually configured source-like Process nodes.
+         */
+        if (incomingConnections.length === 0) {
+            return true;
+        }
+
+        const activeIncoming =
+            incomingConnections.filter(
+                (connection) =>
+                    this.getConnectionBranchState(
+                        connection
+                    ) === "active"
+            );
+
+        if (activeIncoming.length === 0) {
+            return false;
+        }
+
+        /*
+         * Every required input must either receive at least one ACTIVE
+         * branch connection or have a manual fallback value.
+         */
+        for (const input of widget.inputs) {
+            if (input.required === false) {
+                continue;
+            }
+
+            const structuralSources =
+                this.getIncomingConnections(
+                    widget,
+                    input.id
+                );
+
+            if (structuralSources.length === 0) {
+                continue;
+            }
+
+            const activeSources =
+                structuralSources.filter(
+                    (connection) =>
+                        this.getConnectionBranchState(
+                            connection
+                        ) === "active"
+                );
+
+            const hasManualFallback =
+                String(
+                    input.manualValue ?? ""
+                ).trim() !== "";
+
+            if (
+                activeSources.length === 0 &&
+                !hasManualFallback
+            ) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    getDecisionPayload(
+        widget,
+        context,
+        conditionResult
+    ) {
+        if (
+            widget.decisionPayloadMode ===
+            "condition-result"
+        ) {
+            return conditionResult;
+        }
+
+        if (
+            widget.decisionPayloadMode ===
+            "input-object"
+        ) {
+            const payload = {};
+
+            widget.inputs.forEach(
+                (input, index) => {
+                    const name =
+                        this.sanitizeInputName(
+                            input.name,
+                            index
+                        );
+
+                    payload[name] =
+                        context[name];
+                }
+            );
+
+            return payload;
+        }
+
+        return widget.inputs[0]
+            ? widget.inputs[0].value
+            : conditionResult;
+    }
+
+    executeDecisionBranch(
+        widget,
+        context
+    ) {
+        widget.ensureDecisionConfiguration(
+            false
+        );
+
+        const expression =
+            String(
+                widget.decisionExpression ||
+                ""
+            ).trim();
+
+        if (expression === "") {
+            throw new Error(
+                `Decision widget "${widget.title}" has no condition.`
+            );
+        }
+
+        const rawResult =
+            this.safeEvaluateExpression(
+                expression,
+                context
+            );
+
+        const conditionResult =
+            Boolean(rawResult);
+
+        const selectedOutput =
+            conditionResult
+                ? widget.getDecisionTrueOutput()
+                : widget.getDecisionFalseOutput();
+
+        if (!selectedOutput) {
+            throw new Error(
+                `Decision widget "${widget.title}" does not have a valid ${conditionResult ? "TRUE" : "FALSE"} output.`
+            );
+        }
+
+        const payload =
+            this.getDecisionPayload(
+                widget,
+                context,
+                conditionResult
+            );
+
+        /*
+         * Clear stale values from every non-selected branch so a previous
+         * workflow run can never leak data into the current run.
+         */
+        widget.outputs.forEach(
+            (output) => {
+                if (
+                    output.id !==
+                    selectedOutput.id
+                ) {
+                    output.value = "";
+                }
+            }
+        );
+
+        try {
+            selectedOutput.value =
+                this.coerceValueForPort(
+                    payload,
+                    selectedOutput
+                );
+        } catch (error) {
+            throw new Error(
+                `Decision branch output "${selectedOutput.name}" (${this.getPortDataType(selectedOutput)}): ${error.message}`
+            );
+        }
+
+        widget.lastDecisionResult =
+            conditionResult;
+
+        this.setWidgetOutgoingBranchStates(
+            widget,
+            {
+                activeOutputIds: [
+                    selectedOutput.id
+                ]
+            }
+        );
+
+        widget.refreshContent();
+
+        return {
+            conditionResult,
+            selectedOutput,
+            payload
+        };
+    }
+
     getTopologicalOrder() {
         const indegree = new Map();
         const outgoing = new Map();
@@ -6802,7 +7663,8 @@ class Board {
 
                         if (
                             outgoingCount === 0 &&
-                            widget.type !== "End"
+                            widget.type !== "End" &&
+                            widget.type !== "Decision"
                         ) {
                             warnings.push(
                                 `"${widget.title}" output "${output.name}" is not connected.`
@@ -6866,10 +7728,101 @@ class Board {
                     );
                 }
 
+                if (widget.type === "Decision") {
+                    const expression =
+                        String(
+                            widget.decisionExpression ||
+                            ""
+                        ).trim();
+
+                    if (expression === "") {
+                        errors.push(
+                            `Decision widget "${widget.title}" has no condition expression.`
+                        );
+                    }
+
+                    if (widget.outputs.length < 2) {
+                        errors.push(
+                            `Decision widget "${widget.title}" needs at least two outputs for TRUE and FALSE branches.`
+                        );
+                    }
+
+                    const trueOutput =
+                        widget.getDecisionTrueOutput();
+
+                    const falseOutput =
+                        widget.getDecisionFalseOutput();
+
+                    if (!trueOutput) {
+                        errors.push(
+                            `Decision widget "${widget.title}" has no valid TRUE branch output.`
+                        );
+                    }
+
+                    if (!falseOutput) {
+                        errors.push(
+                            `Decision widget "${widget.title}" has no valid FALSE branch output.`
+                        );
+                    }
+
+                    if (
+                        trueOutput &&
+                        falseOutput &&
+                        trueOutput.id ===
+                            falseOutput.id
+                    ) {
+                        errors.push(
+                            `Decision widget "${widget.title}" uses the same output for TRUE and FALSE branches.`
+                        );
+                    }
+
+                    if (
+                        expression !== ""
+                    ) {
+                        try {
+                            this.safeEvaluateExpression(
+                                expression,
+                                this.buildInputContext(
+                                    widget
+                                )
+                            );
+                        } catch (error) {
+                            errors.push(
+                                `Decision widget "${widget.title}" condition is invalid: ${error.message}`
+                            );
+                        }
+                    }
+
+                    if (
+                        trueOutput &&
+                        this.getOutgoingConnections(
+                            widget,
+                            trueOutput.id
+                        ).length === 0
+                    ) {
+                        warnings.push(
+                            `Decision widget "${widget.title}" TRUE branch "${trueOutput.name}" is not connected.`
+                        );
+                    }
+
+                    if (
+                        falseOutput &&
+                        this.getOutgoingConnections(
+                            widget,
+                            falseOutput.id
+                        ).length === 0
+                    ) {
+                        warnings.push(
+                            `Decision widget "${widget.title}" FALSE branch "${falseOutput.name}" is not connected.`
+                        );
+                    }
+                }
+
                 if (
                     widget.language === "Expression" &&
                     widget.type !== "Start" &&
                     widget.type !== "End" &&
+                    widget.type !== "Decision" &&
                     String(widget.source || "").trim() === ""
                 ) {
                     warnings.push(
@@ -6977,6 +7930,10 @@ class Board {
         if (this.isWorkflowRunning) {
             this.stopWorkflowRun();
         }
+
+        this.clearBranchExecutionState({
+            clearDecisionResults: true
+        });
 
         this.widgets.forEach(
             (widget) => {
@@ -7686,6 +8643,11 @@ class Board {
         const topology =
             this.getTopologicalOrder();
 
+        this.clearBranchExecutionState({
+            clearDecisionResults: true
+        });
+        this.hasBranchExecutionState = true;
+
         this.executionRunId += 1;
         const runId =
             this.executionRunId;
@@ -7724,6 +8686,11 @@ class Board {
                 widget.runtimeMs = 0;
                 widget.memoryKb = 0;
                 widget.lastError = "";
+
+                if (widget.type === "Decision") {
+                    widget.lastDecisionResult = null;
+                }
+
                 widget.setStatus(
                     widget.type === "Start"
                         ? "idle"
@@ -7750,11 +8717,74 @@ class Board {
                     return;
                 }
 
+                if (
+                    !this.shouldExecuteWidgetForBranches(
+                        widget
+                    )
+                ) {
+                    widget.inputs.forEach(
+                        (input) => {
+                            this.refreshInputValueFromConnections(
+                                widget,
+                                input.id,
+                                {
+                                    activeOnly: true
+                                }
+                            );
+                        }
+                    );
+
+                    widget.lastDecisionResult =
+                        null;
+
+                    widget.outputs.forEach(
+                        (output) => {
+                            output.value = "";
+                        }
+                    );
+
+                    widget.setStatus(
+                        "skipped",
+                        0,
+                        0
+                    );
+
+                    this.setWidgetOutgoingBranchStates(
+                        widget,
+                        {
+                            forceInactive: true
+                        }
+                    );
+
+                    widget.refreshContent();
+                    this.updateStats();
+
+                    this.appendExecutionLog(
+                        "warning",
+                        `${widget.title} skipped.`,
+                        "No active branch supplied all required inputs."
+                    );
+
+                    if (
+                        this.selectedWidget ===
+                        widget
+                    ) {
+                        this.showWidgetProperties(
+                            widget
+                        );
+                    }
+
+                    continue;
+                }
+
                 widget.inputs.forEach(
                     (input) => {
                         this.refreshInputValueFromConnections(
                             widget,
-                            input.id
+                            input.id,
+                            {
+                                activeOnly: true
+                            }
                         );
                     }
                 );
@@ -7803,28 +8833,52 @@ class Board {
                     runId
                 );
 
-                if (
-                    widget.type !== "Start" ||
-                    (
-                        widget.source &&
-                        widget.language !==
-                            "Pass-through"
-                    )
-                ) {
+                let decisionInfo = null;
+
+                if (widget.type === "Decision") {
                     const context =
                         this.buildInputContext(
                             widget
                         );
 
-                    const result =
-                        this.interpretWidgetSource(
+                    decisionInfo =
+                        this.executeDecisionBranch(
                             widget,
                             context
                         );
+                } else {
+                    if (
+                        widget.type !== "Start" ||
+                        (
+                            widget.source &&
+                            widget.language !==
+                                "Pass-through"
+                        )
+                    ) {
+                        const context =
+                            this.buildInputContext(
+                                widget
+                            );
 
-                    this.applyExecutionResult(
-                        widget,
-                        result
+                        const result =
+                            this.interpretWidgetSource(
+                                widget,
+                                context
+                            );
+
+                        this.applyExecutionResult(
+                            widget,
+                            result
+                        );
+                    }
+
+                    /*
+                     * Normal nodes activate every outgoing edge after they
+                     * execute. Only Decision nodes selectively activate one
+                     * configured output branch.
+                     */
+                    this.setWidgetOutgoingBranchStates(
+                        widget
                     );
                 }
 
@@ -7832,7 +8886,10 @@ class Board {
                     (output) => {
                         this.propagateOutputValue(
                             widget,
-                            output.id
+                            output.id,
+                            {
+                                activeOnly: true
+                            }
                         );
                     }
                 );
@@ -7855,10 +8912,15 @@ class Board {
                 widget.refreshContent();
                 this.updateStats();
 
+                const branchSummary =
+                    decisionInfo
+                        ? ` · condition → ${decisionInfo.conditionResult ? "TRUE" : "FALSE"} · branch: ${decisionInfo.selectedOutput.name}`
+                        : "";
+
                 this.appendExecutionLog(
                     "success",
                     `${widget.title} finished.`,
-                    `${this.getWidgetOutputLogSummary(widget)} · ${runtime.toFixed(1)} ms · ${memory.toFixed(1)} KB`
+                    `${this.getWidgetOutputLogSummary(widget)}${branchSummary} · ${runtime.toFixed(1)} ms · ${memory.toFixed(1)} KB`
                 );
 
                 if (
@@ -8035,6 +9097,15 @@ class Board {
         this.recordHistorySnapshot(
             this.createHistorySnapshot()
         );
+
+        if (
+            !this.isWorkflowRunning &&
+            this.hasBranchExecutionState
+        ) {
+            this.clearBranchExecutionState({
+                clearDecisionResults: true
+            });
+        }
     }
 
     updateHistoryButtons() {
@@ -9722,6 +10793,12 @@ class Board {
             connection
         );
 
+        if (!this.isWorkflowRunning) {
+            this.clearBranchExecutionState({
+                clearDecisionResults: true
+            });
+        }
+
         this.updateConnectionTypeState(
             connection
         );
@@ -9851,6 +10928,16 @@ class Board {
             1
         );
 
+        this.branchConnectionStates.delete(
+            connection.id
+        );
+
+        if (!this.isWorkflowRunning) {
+            this.clearBranchExecutionState({
+                clearDecisionResults: true
+            });
+        }
+
         const targetInput =
             targetWidget &&
             targetWidget.getInputById(
@@ -9915,6 +11002,9 @@ class Board {
         );
 
         this.connections = [];
+
+        this.branchConnectionStates.clear();
+        this.hasBranchExecutionState = false;
 
         this.nextConnectionNumber = 1;
 

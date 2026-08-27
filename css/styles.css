@@ -2124,3 +2124,205 @@ button {
 .connection-arrow-shape {
     fill: context-stroke;
 }
+
+/* =========================================================
+   Decision-node branching
+   ========================================================= */
+
+.widget[data-widget-type="Decision"] .widget-title {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.widget[data-widget-type="Decision"] .widget-title::before {
+    content: "◇";
+    color: #7c3aed;
+    font-size: 14px;
+    line-height: 1;
+}
+
+.widget-branch-badge {
+    flex: 0 0 auto;
+    min-width: 38px;
+    margin-right: 6px;
+    padding: 2px 5px;
+    border-radius: 999px;
+    font-size: 8px;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-align: center;
+}
+
+.widget-branch-badge.branch-true {
+    border: 1px solid #86efac;
+    background-color: #f0fdf4;
+    color: #15803d;
+}
+
+.widget-branch-badge.branch-false {
+    border: 1px solid #fca5a5;
+    background-color: #fef2f2;
+    color: #b91c1c;
+}
+
+.widget-io-row.decision-branch-selected {
+    margin-inline: -4px;
+    padding-inline: 4px;
+    border-radius: 4px;
+    background-color: rgb(34 197 94 / 8%);
+}
+
+.widget-io-row.decision-branch-not-selected {
+    opacity: 0.48;
+}
+
+.widget-status.status-skipped {
+    background-color: #f8fafc;
+    color: #94a3b8;
+    font-style: italic;
+}
+
+.decision-condition-input {
+    min-height: 70px;
+    resize: vertical;
+    font-family:
+        ui-monospace,
+        SFMono-Regular,
+        Menlo,
+        Monaco,
+        Consolas,
+        "Liberation Mono",
+        monospace;
+}
+
+.decision-branch-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.decision-branch-field {
+    min-width: 0;
+    padding: 9px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    background-color: #f8fafc;
+}
+
+.decision-branch-field label {
+    display: block;
+    margin-bottom: 5px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.decision-branch-field select {
+    width: 100%;
+    min-width: 0;
+    padding: 6px;
+    border: 1px solid #94a3b8;
+    border-radius: 4px;
+    background-color: white;
+}
+
+.decision-true-field {
+    border-color: #bbf7d0;
+    background-color: #f0fdf4;
+}
+
+.decision-true-field label {
+    color: #15803d;
+}
+
+.decision-false-field {
+    border-color: #fecaca;
+    background-color: #fef2f2;
+}
+
+.decision-false-field label {
+    color: #b91c1c;
+}
+
+.decision-current-result {
+    margin: 8px 0;
+    padding: 8px 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 5px;
+    background-color: #f8fafc;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.decision-current-result.result-true {
+    border-color: #86efac;
+    background-color: #f0fdf4;
+    color: #15803d;
+}
+
+.decision-current-result.result-false {
+    border-color: #fca5a5;
+    background-color: #fef2f2;
+    color: #b91c1c;
+}
+
+.decision-test-button {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #94a3b8;
+    border-radius: 5px;
+    background-color: white;
+    color: #334155;
+    font-weight: 600;
+}
+
+.decision-test-button:hover {
+    background-color: #f8fafc;
+}
+
+/* Runtime branch visualization. */
+.workflow-connection.connection-branch-active {
+    stroke: #16a34a;
+    stroke-width: 3.5;
+    opacity: 1;
+    filter:
+        drop-shadow(
+            0 0 2px
+            rgb(22 163 74 / 24%)
+        );
+}
+
+.workflow-connection.connection-branch-inactive {
+    stroke: #94a3b8;
+    stroke-width: 2.5;
+    stroke-dasharray: 5 6;
+    opacity: 0.2;
+    filter: none;
+}
+
+/* Selection remains unmistakable even after a branch run. */
+.workflow-connection.connection-selected.connection-branch-active,
+.workflow-connection.connection-selected.connection-branch-inactive {
+    stroke: #2563eb;
+    stroke-width: 4;
+    opacity: 1;
+}
+
+.workflow-map-connection.branch-active {
+    stroke: #16a34a;
+    opacity: 1;
+}
+
+.workflow-map-connection.branch-inactive {
+    stroke: #94a3b8;
+    opacity: 0.2;
+    stroke-dasharray: 2 2;
+}
+
+@media (max-width: 760px) {
+    .decision-branch-grid {
+        grid-template-columns: 1fr;
+    }
+}
