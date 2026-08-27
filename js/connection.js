@@ -228,6 +228,16 @@ class Connection {
                 pathData
             );
         }
+
+        if (
+            this.board &&
+            typeof this.board.updateConnectionTypeState ===
+                "function"
+        ) {
+            this.board.updateConnectionTypeState(
+                this
+            );
+        }
     }
 
 

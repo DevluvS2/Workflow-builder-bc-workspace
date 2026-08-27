@@ -2007,3 +2007,120 @@ button {
         transition: none;
     }
 }
+
+/* =========================================
+   Typed workflow ports + compatibility
+   ========================================= */
+
+.io-type-field {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+}
+
+.io-type-label {
+    color: #64748b;
+    font-size: 10.5px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.io-data-type-select {
+    min-width: 0;
+    font-size: 11.5px;
+}
+
+.io-type-error {
+    border: 1px solid #fecaca;
+    background-color: #fef2f2;
+    color: #b91c1c;
+}
+
+.input-source-row.type-convertible {
+    border-color: #fcd34d;
+    background-color: #fffbeb;
+}
+
+.input-source-row.type-incompatible {
+    border-color: #fca5a5;
+    background-color: #fef2f2;
+    color: #991b1b;
+}
+
+/* Port colors make type information readable directly on the canvas. */
+.widget-port[data-data-type="Any"] {
+    border-color: #64748b;
+}
+
+.widget-port[data-data-type="String"] {
+    border-color: #7c3aed;
+}
+
+.widget-port[data-data-type="Number"] {
+    border-color: #2563eb;
+}
+
+.widget-port[data-data-type="Boolean"] {
+    border-color: #d97706;
+}
+
+.widget-port[data-data-type="Array"] {
+    border-color: #0891b2;
+}
+
+.widget-port[data-data-type="JSON"] {
+    border-color: #16a34a;
+}
+
+.input-port.connection-target-convertible {
+    border-color: #d97706;
+    background-color: #fef3c7;
+    box-shadow:
+        0 0 0 6px
+        rgb(217 119 6 / 15%);
+    transform:
+        translateY(-50%)
+        scale(1.35);
+}
+
+.input-port.connection-target-incompatible {
+    border-color: #dc2626;
+    background-color: #fee2e2;
+    box-shadow:
+        0 0 0 6px
+        rgb(220 38 38 / 16%);
+    transform:
+        translateY(-50%)
+        scale(1.35);
+}
+
+.connection-preview.connection-preview-convertible {
+    stroke: #d97706;
+}
+
+.connection-preview.connection-preview-incompatible {
+    stroke: #dc2626;
+    stroke-dasharray: 4 4;
+}
+
+.workflow-connection.connection-type-convertible {
+    stroke: #b7791f;
+    stroke-dasharray: 7 4;
+}
+
+.workflow-connection.connection-type-incompatible {
+    stroke: #dc2626;
+    stroke-width: 3.5;
+    stroke-dasharray: 5 4;
+    filter:
+        drop-shadow(
+            0 0 2px
+            rgb(220 38 38 / 24%)
+        );
+}
+
+/* Keep arrowheads synchronized with the connection stroke when supported. */
+.connection-arrow-shape {
+    fill: context-stroke;
+}

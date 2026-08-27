@@ -2936,6 +2936,213 @@ class Board {
         };
     }
 
+    getPortDataType(port) {
+        return Widget.normalizeDataType(
+            port && port.dataType
+                ? port.dataType
+                : "Any"
+        );
+    }
+
+    getPortTypeCompatibility(
+        sourcePort,
+        targetPort
+    ) {
+        const sourceType =
+            this.getPortDataType(
+                sourcePort
+            );
+
+        const targetType =
+            this.getPortDataType(
+                targetPort
+            );
+
+        if (
+            sourceType === "Any" ||
+            targetType === "Any"
+        ) {
+            return {
+                compatible: true,
+                level: "flexible",
+                sourceType,
+                targetType,
+                message:
+                    `${sourceType} → ${targetType} is allowed because one side is Any.`
+            };
+        }
+
+        if (sourceType === targetType) {
+            return {
+                compatible: true,
+                level: "exact",
+                sourceType,
+                targetType,
+                message:
+                    `${sourceType} → ${targetType} is an exact type match.`
+            };
+        }
+
+        const convertiblePairs =
+            new Set([
+                "Number->String",
+                "Boolean->String",
+                "Array->String",
+                "JSON->String",
+                "String->Number",
+                "String->Boolean",
+                "String->Array",
+                "String->JSON",
+                "Number->Boolean",
+                "Boolean->Number",
+                "Number->JSON",
+                "Boolean->JSON",
+                "Array->JSON",
+                "JSON->Array"
+            ]);
+
+        if (
+            convertiblePairs.has(
+                `${sourceType}->${targetType}`
+            )
+        ) {
+            return {
+                compatible: true,
+                level: "convertible",
+                sourceType,
+                targetType,
+                message:
+                    `${sourceType} → ${targetType} requires runtime conversion.`
+            };
+        }
+
+        return {
+            compatible: false,
+            level: "incompatible",
+            sourceType,
+            targetType,
+            message:
+                `${sourceType} output cannot feed a ${targetType} input.`
+        };
+    }
+
+    getConnectionTypeCompatibility(
+        connection
+    ) {
+        if (!connection) {
+            return {
+                compatible: false,
+                level: "incompatible",
+                sourceType: "Any",
+                targetType: "Any",
+                message: "Connection is missing."
+            };
+        }
+
+        const sourcePort =
+            connection.sourceWidget
+                .getOutputById(
+                    connection.sourcePortId
+                );
+
+        const targetPort =
+            connection.targetWidget
+                .getInputById(
+                    connection.targetPortId
+                );
+
+        if (!sourcePort || !targetPort) {
+            return {
+                compatible: false,
+                level: "incompatible",
+                sourceType:
+                    sourcePort
+                        ? this.getPortDataType(sourcePort)
+                        : "Missing",
+                targetType:
+                    targetPort
+                        ? this.getPortDataType(targetPort)
+                        : "Missing",
+                message:
+                    "Connection references a missing port."
+            };
+        }
+
+        return this.getPortTypeCompatibility(
+            sourcePort,
+            targetPort
+        );
+    }
+
+    updateConnectionTypeState(
+        connection
+    ) {
+        if (
+            !connection ||
+            !connection.element
+        ) {
+            return;
+        }
+
+        const compatibility =
+            this.getConnectionTypeCompatibility(
+                connection
+            );
+
+        connection.element.classList.toggle(
+            "connection-type-convertible",
+            compatibility.level ===
+                "convertible"
+        );
+
+        connection.element.classList.toggle(
+            "connection-type-incompatible",
+            !compatibility.compatible
+        );
+
+        if (connection.hitElement) {
+            connection.hitElement.dataset.typeCompatibility =
+                compatibility.level;
+
+            connection.hitElement.setAttribute(
+                "aria-label",
+                compatibility.message
+            );
+        }
+    }
+
+    refreshAllConnectionTypeStates() {
+        this.connections.forEach(
+            (connection) => {
+                this.updateConnectionTypeState(
+                    connection
+                );
+            }
+        );
+    }
+
+    coerceValueForPort(
+        value,
+        port,
+        { smartAny = true } = {}
+    ) {
+        const type =
+            this.getPortDataType(port);
+
+        if (type === "Any") {
+            return smartAny
+                ? this.coerceWorkflowValue(
+                    value
+                )
+                : value;
+        }
+
+        return Widget.coerceValueToType(
+            value,
+            type
+        );
+    }
+
     getIncomingConnections(
         widget,
         inputPortId
@@ -2987,8 +3194,20 @@ class Board {
         if (
             incomingConnections.length === 0
         ) {
-            input.value =
-                input.manualValue;
+            try {
+                input.value =
+                    this.coerceValueForPort(
+                        input.manualValue,
+                        input
+                    );
+            } catch (error) {
+                /*
+                 * Keep the raw value visible while editing.
+                 * Validation/execution will surface the typed error.
+                 */
+                input.value =
+                    input.manualValue;
+            }
 
             widget.refreshContent();
             return input.value;
@@ -3003,16 +3222,26 @@ class Board {
                                 connection.sourcePortId
                             );
 
-                    return sourceOutput
-                        ? sourceOutput.value
-                        : "";
+                    if (!sourceOutput) {
+                        return "";
+                    }
+
+                    try {
+                        return this.coerceValueForPort(
+                            sourceOutput.value,
+                            input
+                        );
+                    } catch (error) {
+                        return sourceOutput.value;
+                    }
                 }
             );
 
         /*
-         * Backward-compatible behavior:
-         * one source => scalar value
-         * multiple sources => ordered array
+         * One source => scalar typed value.
+         * Multiple sources => ordered array of values,
+         * where each individual source is coerced to the
+         * input's declared type.
          */
         input.value =
             values.length === 1
@@ -3204,6 +3433,24 @@ class Board {
             !sourcePort ||
             sourceWidget === targetWidget
         ) {
+            return;
+        }
+
+        const compatibility =
+            this.getPortTypeCompatibility(
+                sourcePort,
+                input
+            );
+
+        if (!compatibility.compatible) {
+            void this.showMessageDialog({
+                title: "Incompatible Port Types",
+                message:
+                    `${sourceWidget.title} / ${sourcePort.name} is ${compatibility.sourceType}, but ${targetWidget.title} / ${input.name} expects ${compatibility.targetType}.\n\nChoose a compatible source or change one of the port data types.`,
+                tone: "warning",
+                confirmLabel: "Close"
+            });
+
             return;
         }
 
@@ -3534,6 +3781,87 @@ class Board {
                     }
                 );
 
+                const typeField =
+                    document.createElement(
+                        "div"
+                    );
+                typeField.className =
+                    "io-type-field";
+
+                const typeFieldLabel =
+                    document.createElement(
+                        "span"
+                    );
+                typeFieldLabel.className =
+                    "io-type-label";
+                typeFieldLabel.textContent =
+                    "Data type";
+
+                const dataTypeSelect =
+                    document.createElement(
+                        "select"
+                    );
+                dataTypeSelect.className =
+                    "io-data-type-select";
+
+                Widget.getDataTypes().forEach(
+                    (dataType) => {
+                        const option =
+                            document.createElement(
+                                "option"
+                            );
+                        option.value = dataType;
+                        option.textContent = dataType;
+                        dataTypeSelect.appendChild(
+                            option
+                        );
+                    }
+                );
+
+                dataTypeSelect.value =
+                    this.getPortDataType(
+                        input
+                    );
+
+                dataTypeSelect.addEventListener(
+                    "change",
+                    () => {
+                        const nextType =
+                            Widget.normalizeDataType(
+                                dataTypeSelect.value
+                            );
+
+                        if (
+                            nextType ===
+                            this.getPortDataType(
+                                input
+                            )
+                        ) {
+                            return;
+                        }
+
+                        this.recordHistoryState();
+                        input.dataType = nextType;
+                        this.refreshInputValueFromConnections(
+                            widget,
+                            input.id
+                        );
+                        widget.refreshContent();
+                        this.refreshAllConnectionTypeStates();
+                        this.showWidgetProperties(
+                            widget
+                        );
+                        this.scheduleSave();
+                    }
+                );
+
+                typeField.appendChild(
+                    typeFieldLabel
+                );
+                typeField.appendChild(
+                    dataTypeSelect
+                );
+
                 const incomingConnections =
                     this.getIncomingConnections(
                         widget,
@@ -3596,11 +3924,31 @@ class Board {
                                 option.value =
                                     `${sourceWidget.id}::${output.id}`;
 
+                                const compatibility =
+                                    this.getPortTypeCompatibility(
+                                        output,
+                                        input
+                                    );
+
+                                const compatibilityPrefix =
+                                    !compatibility.compatible
+                                        ? "⛔ "
+                                        : compatibility.level ===
+                                            "convertible"
+                                            ? "↝ "
+                                            : alreadyConnected
+                                                ? "✓ "
+                                                : "";
+
                                 option.textContent =
-                                    `${alreadyConnected ? "✓ " : ""}${sourceWidget.title} / ${output.name}`;
+                                    `${compatibilityPrefix}${sourceWidget.title} / ${output.name} [${this.getPortDataType(output)}]`;
 
                                 option.disabled =
-                                    alreadyConnected;
+                                    alreadyConnected ||
+                                    !compatibility.compatible;
+
+                                option.title =
+                                    compatibility.message;
 
                                 sourceSelect.appendChild(
                                     option
@@ -3619,7 +3967,38 @@ class Board {
                         input.manualValue ?? ""
                     ).trim() === "";
 
-                if (inputMissingRequiredValue) {
+                const incompatibleIncoming =
+                    incomingConnections.filter(
+                        (connection) =>
+                            !this.getConnectionTypeCompatibility(
+                                connection
+                            ).compatible
+                    );
+
+                let manualTypeError = "";
+
+                if (
+                    incomingConnections.length === 0 &&
+                    String(
+                        input.manualValue ?? ""
+                    ).trim() !== ""
+                ) {
+                    try {
+                        this.coerceValueForPort(
+                            input.manualValue,
+                            input
+                        );
+                    } catch (error) {
+                        manualTypeError =
+                            error.message;
+                    }
+                }
+
+                if (
+                    inputMissingRequiredValue ||
+                    incompatibleIncoming.length > 0 ||
+                    manualTypeError
+                ) {
                     card.classList.add(
                         "invalid"
                     );
@@ -3683,8 +4062,24 @@ class Board {
                                 document.createElement(
                                     "span"
                                 );
+                            const compatibility =
+                                this.getConnectionTypeCompatibility(
+                                    connection
+                                );
+
                             sourceText.textContent =
-                                `${index + 1}. ${connection.sourceWidget.title} / ${sourceOutput ? sourceOutput.name : "output"}`;
+                                `${index + 1}. ${connection.sourceWidget.title} / ${sourceOutput ? sourceOutput.name : "output"} [${sourceOutput ? this.getPortDataType(sourceOutput) : "Missing"}]${compatibility.level === "convertible" ? " ↝ convert" : !compatibility.compatible ? " ⛔ incompatible" : ""}`;
+
+                            row.classList.toggle(
+                                "type-incompatible",
+                                !compatibility.compatible
+                            );
+
+                            row.classList.toggle(
+                                "type-convertible",
+                                compatibility.level ===
+                                    "convertible"
+                            );
 
                             const removeSourceButton =
                                 document.createElement(
@@ -3750,7 +4145,7 @@ class Board {
                         ? input.manualValue
                         : "";
                 manualValue.placeholder =
-                    "Manual input value";
+                    `Manual ${this.getPortDataType(input)} value`;
                 manualValue.disabled =
                     incomingConnections.length > 0;
 
@@ -3776,11 +4171,22 @@ class Board {
                                 input.id
                             ).length === 0
                         ) {
-                            input.value =
-                                manualValue.value;
+                            try {
+                                input.value =
+                                    this.coerceValueForPort(
+                                        manualValue.value,
+                                        input
+                                    );
+                            } catch (error) {
+                                input.value =
+                                    manualValue.value;
+                            }
                         }
 
                         widget.refreshContent();
+                        this.showWidgetProperties(
+                            widget
+                        );
                         this.scheduleSave();
                     }
                 );
@@ -3864,6 +4270,7 @@ class Board {
                 );
 
                 card.appendChild(nameInput);
+                card.appendChild(typeField);
                 card.appendChild(sourceSelect);
                 card.appendChild(connectedSources);
                 card.appendChild(multiSourceHint);
@@ -3879,6 +4286,30 @@ class Board {
                         "io-validation-message";
                     issue.textContent =
                         "Required input needs at least one source or a manual value.";
+                    card.appendChild(issue);
+                }
+
+                if (incompatibleIncoming.length > 0) {
+                    const issue =
+                        document.createElement(
+                            "div"
+                        );
+                    issue.className =
+                        "io-validation-message io-type-error";
+                    issue.textContent =
+                        `${incompatibleIncoming.length} connected source${incompatibleIncoming.length === 1 ? " is" : "s are"} incompatible with ${this.getPortDataType(input)}.`;
+                    card.appendChild(issue);
+                }
+
+                if (manualTypeError) {
+                    const issue =
+                        document.createElement(
+                            "div"
+                        );
+                    issue.className =
+                        "io-validation-message io-type-error";
+                    issue.textContent =
+                        manualTypeError;
                     card.appendChild(issue);
                 }
 
@@ -3962,6 +4393,100 @@ class Board {
                     }
                 );
 
+                const typeField =
+                    document.createElement(
+                        "div"
+                    );
+                typeField.className =
+                    "io-type-field";
+
+                const typeFieldLabel =
+                    document.createElement(
+                        "span"
+                    );
+                typeFieldLabel.className =
+                    "io-type-label";
+                typeFieldLabel.textContent =
+                    "Data type";
+
+                const dataTypeSelect =
+                    document.createElement(
+                        "select"
+                    );
+                dataTypeSelect.className =
+                    "io-data-type-select";
+
+                Widget.getDataTypes().forEach(
+                    (dataType) => {
+                        const option =
+                            document.createElement(
+                                "option"
+                            );
+                        option.value = dataType;
+                        option.textContent = dataType;
+                        dataTypeSelect.appendChild(
+                            option
+                        );
+                    }
+                );
+
+                dataTypeSelect.value =
+                    this.getPortDataType(
+                        output
+                    );
+
+                dataTypeSelect.addEventListener(
+                    "change",
+                    () => {
+                        const nextType =
+                            Widget.normalizeDataType(
+                                dataTypeSelect.value
+                            );
+
+                        if (
+                            nextType ===
+                            this.getPortDataType(
+                                output
+                            )
+                        ) {
+                            return;
+                        }
+
+                        this.recordHistoryState();
+                        output.dataType = nextType;
+
+                        if (
+                            String(
+                                output.value ?? ""
+                            ).trim() !== ""
+                        ) {
+                            try {
+                                output.value =
+                                    this.coerceValueForPort(
+                                        output.value,
+                                        output
+                                    );
+                            } catch (error) {
+                                // Keep raw value visible; validation will flag it.
+                            }
+                        }
+
+                        widget.refreshContent();
+                        this.refreshAllConnectionTypeStates();
+                        this.showWidgetProperties(
+                            widget
+                        );
+                        this.scheduleSave();
+                    }
+                );
+
+                typeField.appendChild(
+                    typeFieldLabel
+                );
+                typeField.appendChild(
+                    dataTypeSelect
+                );
+
                 const valueInput =
                     document.createElement(
                         "input"
@@ -3987,8 +4512,18 @@ class Board {
                         }
 
                         this.recordHistoryState();
-                        output.value =
-                            valueInput.value;
+
+                        try {
+                            output.value =
+                                this.coerceValueForPort(
+                                    valueInput.value,
+                                    output
+                                );
+                        } catch (error) {
+                            output.value =
+                                valueInput.value;
+                        }
+
                         widget.refreshContent();
                         this.propagateOutputValue(
                             widget,
@@ -4011,8 +4546,19 @@ class Board {
                         output.id
                     ).length;
 
+                const incompatibleCount =
+                    this.getOutgoingConnections(
+                        widget,
+                        output.id
+                    ).filter(
+                        (connection) =>
+                            !this.getConnectionTypeCompatibility(
+                                connection
+                            ).compatible
+                    ).length;
+
                 outputMeta.textContent =
-                    `${connectionCount} downstream connection${connectionCount === 1 ? "" : "s"}`;
+                    `${this.getPortDataType(output)} · ${connectionCount} downstream connection${connectionCount === 1 ? "" : "s"}${incompatibleCount > 0 ? ` · ${incompatibleCount} incompatible` : ""}`;
 
                 const removeButton =
                     document.createElement(
@@ -4035,6 +4581,7 @@ class Board {
                 );
 
                 card.appendChild(nameInput);
+                card.appendChild(typeField);
                 card.appendChild(valueInput);
                 card.appendChild(outputMeta);
                 card.appendChild(removeButton);
@@ -4448,14 +4995,36 @@ class Board {
                     connection.targetPortId
                 );
 
+        const compatibility =
+            this.getPortTypeCompatibility(
+                sourcePort,
+                targetPort
+            );
+
         const details = [
             [
                 "From",
                 `${connection.sourceWidget.title} / ${sourcePort ? sourcePort.name : "output"}`
             ],
             [
+                "Output type",
+                sourcePort
+                    ? this.getPortDataType(sourcePort)
+                    : "Missing"
+            ],
+            [
                 "To",
                 `${connection.targetWidget.title} / ${targetPort ? targetPort.name : "input"}`
+            ],
+            [
+                "Input type",
+                targetPort
+                    ? this.getPortDataType(targetPort)
+                    : "Missing"
+            ],
+            [
+                "Compatibility",
+                compatibility.message
             ],
             [
                 "Current value",
@@ -6154,6 +6723,27 @@ class Board {
                     );
                 }
 
+                if (sourcePort && targetPort) {
+                    const compatibility =
+                        this.getPortTypeCompatibility(
+                            sourcePort,
+                            targetPort
+                        );
+
+                    if (!compatibility.compatible) {
+                        errors.push(
+                            `Type mismatch: "${connection.sourceWidget.title} / ${sourcePort.name}" is ${compatibility.sourceType}, but "${connection.targetWidget.title} / ${targetPort.name}" expects ${compatibility.targetType}.`
+                        );
+                    } else if (
+                        compatibility.level ===
+                        "convertible"
+                    ) {
+                        warnings.push(
+                            `Runtime conversion: "${connection.sourceWidget.title} / ${sourcePort.name}" (${compatibility.sourceType}) → "${connection.targetWidget.title} / ${targetPort.name}" (${compatibility.targetType}).`
+                        );
+                    }
+                }
+
             }
         );
 
@@ -6181,6 +6771,24 @@ class Board {
                                 `"${widget.title}" requires input "${input.name}", but it has no source or manual value.`
                             );
                         }
+
+                        if (
+                            incomingConnections.length === 0 &&
+                            manualValue !== "" &&
+                            this.getPortDataType(input) !==
+                                "Any"
+                        ) {
+                            try {
+                                this.coerceValueForPort(
+                                    input.manualValue,
+                                    input
+                                );
+                            } catch (error) {
+                                errors.push(
+                                    `"${widget.title}" input "${input.name}" cannot use its manual value as ${this.getPortDataType(input)}: ${error.message}`
+                                );
+                            }
+                        }
                     }
                 );
 
@@ -6199,6 +6807,25 @@ class Board {
                             warnings.push(
                                 `"${widget.title}" output "${output.name}" is not connected.`
                             );
+                        }
+
+                        if (
+                            String(
+                                output.value ?? ""
+                            ).trim() !== "" &&
+                            this.getPortDataType(output) !==
+                                "Any"
+                        ) {
+                            try {
+                                this.coerceValueForPort(
+                                    output.value,
+                                    output
+                                );
+                            } catch (error) {
+                                errors.push(
+                                    `"${widget.title}" output "${output.name}" cannot provide its current value as ${this.getPortDataType(output)}: ${error.message}`
+                                );
+                            }
                         }
                     }
                 );
@@ -6596,10 +7223,33 @@ class Board {
                         index
                     );
 
-                context[name] =
-                    this.coerceWorkflowValue(
+                const incomingCount =
+                    this.getIncomingConnections(
+                        widget,
+                        input.id
+                    ).length;
+
+                if (
+                    incomingCount > 1 &&
+                    Array.isArray(
                         input.value
-                    );
+                    )
+                ) {
+                    context[name] =
+                        input.value.map(
+                            (value) =>
+                                this.coerceValueForPort(
+                                    value,
+                                    input
+                                )
+                        );
+                } else {
+                    context[name] =
+                        this.coerceValueForPort(
+                            input.value,
+                            input
+                        );
+                }
 
                 context[`input${index + 1}`] =
                     context[name];
@@ -6894,17 +7544,29 @@ class Board {
             return;
         }
 
-        if (
-            Array.isArray(result)
-        ) {
+        const assignOutput =
+            (output, value) => {
+                try {
+                    output.value =
+                        this.coerceValueForPort(
+                            value,
+                            output
+                        );
+                } catch (error) {
+                    throw new Error(
+                        `Output "${output.name}" (${this.getPortDataType(output)}): ${error.message}`
+                    );
+                }
+            };
+
+        if (Array.isArray(result)) {
             widget.outputs.forEach(
                 (output, index) => {
-                    if (
-                        index <
-                        result.length
-                    ) {
-                        output.value =
-                            result[index];
+                    if (index < result.length) {
+                        assignOutput(
+                            output,
+                            result[index]
+                        );
                     }
                 }
             );
@@ -6926,8 +7588,10 @@ class Board {
                             output.name
                         )
                     ) {
-                        output.value =
-                            result[output.name];
+                        assignOutput(
+                            output,
+                            result[output.name]
+                        );
                         matchedOutput = true;
                     }
                 }
@@ -6940,19 +7604,25 @@ class Board {
 
         if (
             widget.language ===
-            "Pass-through" &&
+                "Pass-through" &&
             widget.outputs.length > 1
         ) {
             widget.outputs.forEach(
                 (output) => {
-                    output.value = result;
+                    assignOutput(
+                        output,
+                        result
+                    );
                 }
             );
 
             return;
         }
 
-        widget.outputs[0].value = result;
+        assignOutput(
+            widget.outputs[0],
+            result
+        );
     }
 
     estimateWidgetMemory(widget) {
@@ -8663,18 +9333,73 @@ class Board {
 
         document
             .querySelectorAll(
-                ".input-port.connection-target"
+                ".input-port.connection-target, .input-port.connection-target-convertible, .input-port.connection-target-incompatible"
             )
             .forEach((port) => {
                 port.classList.remove(
-                    "connection-target"
+                    "connection-target",
+                    "connection-target-convertible",
+                    "connection-target-incompatible"
                 );
             });
 
+        this.connectionPreviewElement.classList.remove(
+            "connection-preview-convertible",
+            "connection-preview-incompatible"
+        );
+
         if (nearestInputPort) {
-            nearestInputPort.classList.add(
-                "connection-target"
-            );
+            const targetWidget =
+                this.getWidgetFromPort(
+                    nearestInputPort
+                );
+
+            const targetPortId =
+                this.getPortIdFromPort(
+                    nearestInputPort
+                );
+
+            const sourcePort =
+                this.connectionSourceWidget
+                    .getOutputById(
+                        this.connectionSourcePortId
+                    );
+
+            const targetPort =
+                targetWidget && targetPortId
+                    ? targetWidget.getInputById(
+                        targetPortId
+                    )
+                    : null;
+
+            const compatibility =
+                this.getPortTypeCompatibility(
+                    sourcePort,
+                    targetPort
+                );
+
+            if (!compatibility.compatible) {
+                nearestInputPort.classList.add(
+                    "connection-target-incompatible"
+                );
+                this.connectionPreviewElement.classList.add(
+                    "connection-preview-incompatible"
+                );
+            } else if (
+                compatibility.level ===
+                "convertible"
+            ) {
+                nearestInputPort.classList.add(
+                    "connection-target-convertible"
+                );
+                this.connectionPreviewElement.classList.add(
+                    "connection-preview-convertible"
+                );
+            } else {
+                nearestInputPort.classList.add(
+                    "connection-target"
+                );
+            }
         }
     }
 
@@ -8807,7 +9532,7 @@ class Board {
         try {
             const inputPort =
                 this.workspace.querySelector(
-                    ".input-port.connection-target"
+                    ".input-port.connection-target, .input-port.connection-target-convertible, .input-port.connection-target-incompatible"
                 );
 
             if (!inputPort) {
@@ -8841,6 +9566,29 @@ class Board {
                 );
 
             if (!sourcePort) {
+                return;
+            }
+
+            const targetPort =
+                targetWidget.getInputById(
+                    targetPortId
+                );
+
+            const compatibility =
+                this.getPortTypeCompatibility(
+                    sourcePort,
+                    targetPort
+                );
+
+            if (!compatibility.compatible) {
+                void this.showMessageDialog({
+                    title: "Incompatible Port Types",
+                    message:
+                        `${sourceWidget.title} / ${sourcePort.name} (${compatibility.sourceType}) cannot connect to ${targetWidget.title} / ${targetPort ? targetPort.name : "input"} (${compatibility.targetType}).`,
+                    tone: "warning",
+                    confirmLabel: "Close"
+                });
+
                 return;
             }
 
@@ -8974,6 +9722,9 @@ class Board {
             connection
         );
 
+        this.updateConnectionTypeState(
+            connection
+        );
         this.updateWorkflowMap();
         this.scheduleSave();
 
@@ -8998,11 +9749,13 @@ class Board {
 
         document
             .querySelectorAll(
-                ".input-port.connection-target"
+                ".input-port.connection-target, .input-port.connection-target-convertible, .input-port.connection-target-incompatible"
             )
             .forEach((port) => {
                 port.classList.remove(
-                    "connection-target"
+                    "connection-target",
+                    "connection-target-convertible",
+                    "connection-target-incompatible"
                 );
             });
 

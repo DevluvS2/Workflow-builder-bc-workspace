@@ -120,6 +120,7 @@ class Widget {
             return {
                 id,
                 name,
+                dataType: "Any",
                 value: "",
                 manualValue: "",
                 required: true
@@ -129,6 +130,7 @@ class Widget {
         return {
             id,
             name,
+            dataType: "Any",
             value: ""
         };
     }
@@ -175,6 +177,13 @@ class Widget {
                         : `input ${index + 1}`
                 ),
 
+            dataType:
+                Widget.normalizeDataType(
+                    port && port.dataType
+                        ? port.dataType
+                        : "Any"
+                ),
+
             value:
                 port && port.value !== undefined
                     ? port.value
@@ -211,6 +220,13 @@ class Widget {
                     port && port.name
                         ? port.name
                         : `output ${index + 1}`
+                ),
+
+            dataType:
+                Widget.normalizeDataType(
+                    port && port.dataType
+                        ? port.dataType
+                        : "Any"
                 ),
 
             value:
@@ -432,7 +448,7 @@ class Widget {
                         : "Out";
 
                 text.textContent =
-                    `${prefix} ${port.name}: ${Widget.formatValue(port.value)}`;
+                    `${prefix} ${port.name} [${Widget.normalizeDataType(port.dataType)}]: ${Widget.formatValue(port.value)}`;
 
                 const portButton =
                     document.createElement(
@@ -450,8 +466,13 @@ class Widget {
                 portButton.dataset.direction =
                     direction;
 
+                portButton.dataset.dataType =
+                    Widget.normalizeDataType(
+                        port.dataType
+                    );
+
                 portButton.title =
-                    `${direction === "input" ? "Input" : "Output"}: ${port.name}`;
+                    `${direction === "input" ? "Input" : "Output"}: ${port.name} · ${Widget.normalizeDataType(port.dataType)}`;
 
                 portButton.setAttribute(
                     "aria-label",
@@ -1183,6 +1204,177 @@ class Widget {
         };
     }
 
+
+    static getDataTypes() {
+        return [
+            "Any",
+            "String",
+            "Number",
+            "Boolean",
+            "Array",
+            "JSON"
+        ];
+    }
+
+    static normalizeDataType(dataType) {
+        const normalized =
+            String(dataType || "Any")
+                .trim();
+
+        return Widget.getDataTypes().includes(
+            normalized
+        )
+            ? normalized
+            : "Any";
+    }
+
+    static coerceValueToType(
+        value,
+        dataType = "Any"
+    ) {
+        const type =
+            Widget.normalizeDataType(
+                dataType
+            );
+
+        if (type === "Any") {
+            return value;
+        }
+
+        if (type === "String") {
+            if (
+                value !== null &&
+                typeof value === "object"
+            ) {
+                return JSON.stringify(value);
+            }
+
+            return value === null ||
+                value === undefined
+                ? ""
+                : String(value);
+        }
+
+        if (type === "Number") {
+            if (
+                typeof value === "number" &&
+                Number.isFinite(value)
+            ) {
+                return value;
+            }
+
+            const numberValue =
+                Number(
+                    typeof value === "string"
+                        ? value.trim()
+                        : value
+                );
+
+            if (!Number.isFinite(numberValue)) {
+                throw new Error(
+                    `Cannot convert ${Widget.formatValue(value)} to Number.`
+                );
+            }
+
+            return numberValue;
+        }
+
+        if (type === "Boolean") {
+            if (typeof value === "boolean") {
+                return value;
+            }
+
+            if (typeof value === "number") {
+                if (value === 1) {
+                    return true;
+                }
+
+                if (value === 0) {
+                    return false;
+                }
+            }
+
+            const text =
+                String(value)
+                    .trim()
+                    .toLowerCase();
+
+            if (["true", "1", "yes", "on"].includes(text)) {
+                return true;
+            }
+
+            if (["false", "0", "no", "off"].includes(text)) {
+                return false;
+            }
+
+            throw new Error(
+                `Cannot convert ${Widget.formatValue(value)} to Boolean.`
+            );
+        }
+
+        if (type === "Array") {
+            if (Array.isArray(value)) {
+                return value;
+            }
+
+            if (typeof value === "string") {
+                try {
+                    const parsed =
+                        JSON.parse(value);
+
+                    if (Array.isArray(parsed)) {
+                        return parsed;
+                    }
+                } catch (error) {
+                    // Fall through to the typed error below.
+                }
+            }
+
+            throw new Error(
+                `Cannot convert ${Widget.formatValue(value)} to Array.`
+            );
+        }
+
+        if (type === "JSON") {
+            if (typeof value === "string") {
+                try {
+                    return JSON.parse(value);
+                } catch (error) {
+                    throw new Error(
+                        `Cannot parse ${Widget.formatValue(value)} as JSON.`
+                    );
+                }
+            }
+
+            try {
+                JSON.stringify(value);
+                return value;
+            } catch (error) {
+                throw new Error(
+                    `Value is not JSON-serializable.`
+                );
+            }
+        }
+
+        return value;
+    }
+
+    static canCoerceValueToType(
+        value,
+        dataType = "Any"
+    ) {
+        try {
+            Widget.coerceValueToType(
+                value,
+                dataType
+            );
+
+            return true;
+        } catch (error) {
+            return false;
+        }
+    }
+
     static formatValue(value) {
         if (
             value === "" ||
@@ -1227,6 +1419,10 @@ class Widget {
                     (port) => ({
                         id: port.id,
                         name: port.name,
+                        dataType:
+                            Widget.normalizeDataType(
+                                port.dataType
+                            ),
                         value: port.value,
                         manualValue:
                             port.manualValue,
@@ -1240,6 +1436,10 @@ class Widget {
                     (port) => ({
                         id: port.id,
                         name: port.name,
+                        dataType:
+                            Widget.normalizeDataType(
+                                port.dataType
+                            ),
                         value: port.value
                     })
                 ),
