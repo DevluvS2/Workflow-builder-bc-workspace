@@ -46,6 +46,4 @@ if (!restored) {
 
     board.centerWorkspace();
     board.saveState();
-
-    board.saveState();
 }

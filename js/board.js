@@ -4,6 +4,7 @@ class Board {
 
         this.widgets = [];
         this.selectedWidget = null;
+        this.selectedConnection = null;
 
         this.nextWidgetZIndex = 3;
 
@@ -46,6 +47,14 @@ class Board {
 
         this.panStartOffsetX = 0;
         this.panStartOffsetY = 0;
+
+        /*
+         * Workflow Map dragging state.
+         */
+        this.isWorkflowMapDragging = false;
+        this.workflowMapPointerId = null;
+        this.workflowMapDragOffsetX = 0;
+        this.workflowMapDragOffsetY = 0;
 
         this.minimumZoom = 0.25;
         this.maximumZoom = 4;
@@ -117,6 +126,13 @@ class Board {
         const newMenuItem = document.createElement("button");
         newMenuItem.textContent = "New";
 
+        newMenuItem.addEventListener(
+            "click",
+            () => {
+                this.createNewWorkflow();
+            }
+        );
+
         const exportMenuItem = document.createElement("button");
         exportMenuItem.textContent = "Export";
 
@@ -165,6 +181,12 @@ class Board {
                 event.target.value = "";
             }
         );
+
+        /*
+         * Keep the hidden file input in the DOM so
+         * File -> Import works consistently.
+         */
+        fileMenu.appendChild(importInput);
 
         const editButton = document.createElement("button");
         editButton.textContent = "Edit";
@@ -540,25 +562,75 @@ class Board {
     }
 
     createWorkflowMap() {
-        const workflowMap = document.createElement("div");
-        workflowMap.className = "workflow-map";
+        const workflowMap =
+            document.createElement("div");
 
-        const mapTitle = document.createElement("div");
-        mapTitle.className = "workflow-map-title";
-        mapTitle.textContent = "Workflow Map";
+        workflowMap.className =
+            "workflow-map";
 
-        const mapContent = document.createElement("div");
-        mapContent.className = "workflow-map-content";
+        const mapTitle =
+            document.createElement("div");
 
-        workflowMap.appendChild(mapTitle);
-        workflowMap.appendChild(mapContent);
+        mapTitle.className =
+            "workflow-map-title";
 
-        this.workflowMapContent = mapContent;
+        mapTitle.textContent =
+            "Workflow Map";
 
+        const mapContent =
+            document.createElement("div");
+
+        mapContent.className =
+            "workflow-map-content";
+
+        workflowMap.appendChild(
+            mapTitle
+        );
+
+        workflowMap.appendChild(
+            mapContent
+        );
+
+        this.workflowMapContent =
+            mapContent;
+
+        /*
+         * Click anywhere to navigate, or click-and-hold
+         * and drag to continuously pan the main canvas.
+         */
         mapContent.addEventListener(
             "pointerdown",
             (event) => {
-                this.centerViewFromMap(event);
+                this.startWorkflowMapDrag(
+                    event
+                );
+            }
+        );
+
+        mapContent.addEventListener(
+            "pointermove",
+            (event) => {
+                this.dragWorkflowMap(
+                    event
+                );
+            }
+        );
+
+        mapContent.addEventListener(
+            "pointerup",
+            (event) => {
+                this.stopWorkflowMapDrag(
+                    event
+                );
+            }
+        );
+
+        mapContent.addEventListener(
+            "pointercancel",
+            (event) => {
+                this.stopWorkflowMapDrag(
+                    event
+                );
             }
         );
 
@@ -1512,33 +1584,40 @@ class Board {
 
     selectWidget(widget) {
         this.clearConnectionSelection();
-        this.widgets.forEach((currentWidget) => {
-            currentWidget.setSelected(currentWidget === widget);
-        });
+
+        this.widgets.forEach(
+            (currentWidget) => {
+                currentWidget.setSelected(
+                    currentWidget === widget
+                );
+            }
+        );
 
         this.selectedWidget = widget;
 
         if (widget) {
-            this.showWidgetProperties(widget);
+            this.showWidgetProperties(
+                widget
+            );
         } else {
             this.showNoSelectionMessage();
         }
 
         this.updateStats();
+        this.updateWorkflowMap();
     }
 
     selectConnection(connection) {
         /*
-        * Remove old connection selection.
-        */
+         * Remove old connection selection.
+         */
         this.clearConnectionSelection();
 
-
         /*
-        * Deselect every widget WITHOUT calling
-        * selectWidget(), because selectWidget()
-        * itself clears connection selection.
-        */
+         * Deselect widgets without calling selectWidget(),
+         * because selectWidget() intentionally clears
+         * connection selection.
+         */
         this.widgets.forEach(
             (widget) => {
                 widget.setSelected(false);
@@ -1547,18 +1626,15 @@ class Board {
 
         this.selectedWidget = null;
 
-
         if (!connection) {
             this.showNoSelectionMessage();
             this.updateStats();
-
+            this.updateWorkflowMap();
             return;
         }
 
-
         this.selectedConnection =
             connection;
-
 
         if (connection.element) {
             connection.element.classList.add(
@@ -1566,12 +1642,12 @@ class Board {
             );
         }
 
-
         this.showConnectionProperties(
             connection
         );
 
         this.updateStats();
+        this.updateWorkflowMap();
     }
 
     clearConnectionSelection() {
@@ -1954,12 +2030,16 @@ class Board {
 
         this.clearWorkflow();
 
-        this.zoom = 1;
-        this.panX = 0;
-        this.panY = 0;
         this.nextWidgetNumber = 1;
+        this.nextWidgetZIndex = 3;
 
-        this.updateWorkspaceTransform();
+        /*
+         * A new workflow starts centered instead of at
+         * the top-left corner.
+         */
+        this.centerWorkspace();
+        this.updateStats();
+        this.saveState();
     }
 
     clearWorkflow() {
@@ -1996,99 +2076,6 @@ class Board {
         this.showNoSelectionMessage();
         this.updateStats();
         this.updateWorkflowMap();
-    }
-
-    importWorkflow(file) {
-        const reader = new FileReader();
-
-        reader.addEventListener("load", () => {
-            try {
-                const workflowData =
-                    JSON.parse(reader.result);
-
-                if (
-                    !workflowData ||
-                    !Array.isArray(workflowData.widgets)
-                ) {
-                    throw new Error(
-                        "Workflow does not contain a widget array."
-                    );
-                }
-
-                this.clearWorkflow();
-
-                workflowData.widgets.forEach(
-                    (widgetData) => {
-                        const widget = new Widget(
-                            this,
-                            String(widgetData.id),
-                            String(widgetData.title),
-                            String(
-                                widgetData.type || "Process"
-                            ),
-                            Number(widgetData.x),
-                            Number(widgetData.y)
-                        );
-
-                        if (
-                            Number.isNaN(widget.x) ||
-                            Number.isNaN(widget.y)
-                        ) {
-                            throw new Error(
-                                "A widget has invalid coordinates."
-                            );
-                        }
-
-                        this.addWidget(widget);
-                    }
-                );
-
-                if (
-                    typeof workflowData.zoom === "number"
-                ) {
-                    this.zoom = Math.max(
-                        this.minimumZoom,
-                        Math.min(
-                            this.maximumZoom,
-                            workflowData.zoom
-                        )
-                    );
-                }
-
-                if (
-                    typeof workflowData.panX === "number"
-                ) {
-                    this.panX = workflowData.panX;
-                }
-
-                if (
-                    typeof workflowData.panY === "number"
-                ) {
-                    this.panY = workflowData.panY;
-                }
-
-                this.nextWidgetNumber =
-                    this.widgets.length + 1;
-
-                this.centerWorkspace();
-                this.updateStats();
-                this.updateWorkflowMap();
-            } catch (error) {
-                window.alert(
-                    "The selected workflow file is invalid."
-                );
-
-                console.error(error);
-            }
-        });
-
-        reader.addEventListener("error", () => {
-            window.alert(
-                "The workflow file could not be read."
-            );
-        });
-
-        reader.readAsText(file);
     }
 
     updateStats() {
@@ -2130,140 +2117,371 @@ class Board {
             return;
         }
 
-        this.workflowMapContent.innerHTML = "";
+        this.workflowMapContent.innerHTML =
+            "";
 
         const mapWidth =
-            this.workflowMapContent.clientWidth || 198;
+            this.workflowMapContent
+                .clientWidth || 198;
 
         const mapHeight =
-            this.workflowMapContent.clientHeight || 112;
+            this.workflowMapContent
+                .clientHeight || 112;
+
+        const itemWidth = 16;
+        const itemHeight = 10;
 
         /*
-        * Draw each widget as a small rectangle.
-        */
+         * Calculate miniature widget positions once so
+         * widget boxes and connection paths stay aligned.
+         */
+        const mapPositions =
+            new Map();
+
+        this.widgets.forEach(
+            (widget) => {
+                const rawX =
+                    (
+                        widget.x /
+                        this.workspaceWidth
+                    ) *
+                    mapWidth;
+
+                const rawY =
+                    (
+                        widget.y /
+                        this.workspaceHeight
+                    ) *
+                    mapHeight;
+
+                const left =
+                    Math.max(
+                        0,
+                        Math.min(
+                            mapWidth -
+                                itemWidth,
+                            rawX
+                        )
+                    );
+
+                const top =
+                    Math.max(
+                        0,
+                        Math.min(
+                            mapHeight -
+                                itemHeight,
+                            rawY
+                        )
+                    );
+
+                mapPositions.set(
+                    widget,
+                    {
+                        left,
+                        top,
+                        right:
+                            left +
+                            itemWidth,
+                        centerX:
+                            left +
+                            itemWidth / 2,
+                        centerY:
+                            top +
+                            itemHeight / 2
+                    }
+                );
+            }
+        );
+
         if (this.widgets.length === 0) {
             const emptyMessage =
-                document.createElement("div");
+                document.createElement(
+                    "div"
+                );
 
             emptyMessage.className =
                 "workflow-map-empty";
 
-            emptyMessage.textContent = "No widgets";
+            emptyMessage.textContent =
+                "No widgets";
 
-            this.workflowMapContent.appendChild(
-                emptyMessage
-            );
-        } else {
-            this.widgets.forEach((widget) => {
-                const mapItem =
-                    document.createElement("div");
-
-                mapItem.className =
-                    "workflow-map-item";
-
-                mapItem.title = widget.title;
-
-                const mapX =
-                    (widget.x / this.workspaceWidth) *
-                    mapWidth;
-
-                const mapY =
-                    (widget.y / this.workspaceHeight) *
-                    mapHeight;
-
-                mapItem.style.left =
-                    `${Math.max(
-                        0,
-                        Math.min(
-                            mapWidth - 16,
-                            mapX
-                        )
-                    )}px`;
-
-                mapItem.style.top =
-                    `${Math.max(
-                        0,
-                        Math.min(
-                            mapHeight - 10,
-                            mapY
-                        )
-                    )}px`;
-
-                this.workflowMapContent.appendChild(
-                    mapItem
+            this.workflowMapContent
+                .appendChild(
+                    emptyMessage
                 );
-            });
+        } else {
+            /*
+             * Miniature workflow connections.
+             */
+            const svgNamespace =
+                "http://www.w3.org/2000/svg";
+
+            const mapConnections =
+                document.createElementNS(
+                    svgNamespace,
+                    "svg"
+                );
+
+            mapConnections.classList.add(
+                "workflow-map-connections"
+            );
+
+            mapConnections.setAttribute(
+                "viewBox",
+                `0 0 ${mapWidth} ${mapHeight}`
+            );
+
+            mapConnections.setAttribute(
+                "width",
+                String(mapWidth)
+            );
+
+            mapConnections.setAttribute(
+                "height",
+                String(mapHeight)
+            );
+
+            this.connections.forEach(
+                (connection) => {
+                    const source =
+                        mapPositions.get(
+                            connection
+                                .sourceWidget
+                        );
+
+                    const target =
+                        mapPositions.get(
+                            connection
+                                .targetWidget
+                        );
+
+                    if (
+                        !source ||
+                        !target
+                    ) {
+                        return;
+                    }
+
+                    const sourceX =
+                        source.right;
+
+                    const sourceY =
+                        source.centerY;
+
+                    const targetX =
+                        target.left;
+
+                    const targetY =
+                        target.centerY;
+
+                    const path =
+                        document.createElementNS(
+                            svgNamespace,
+                            "path"
+                        );
+
+                    path.classList.add(
+                        "workflow-map-connection"
+                    );
+
+                    if (
+                        this.selectedConnection ===
+                        connection
+                    ) {
+                        path.classList.add(
+                            "selected"
+                        );
+                    }
+
+                    const horizontalDistance =
+                        Math.abs(
+                            targetX -
+                            sourceX
+                        );
+
+                    const curve =
+                        Math.max(
+                            6,
+                            horizontalDistance *
+                                0.4
+                        );
+
+                    let pathData;
+
+                    if (
+                        targetX >=
+                        sourceX
+                    ) {
+                        pathData =
+                            (
+                                `M ${sourceX} ${sourceY} ` +
+                                `C ${sourceX + curve} ${sourceY}, ` +
+                                `${targetX - curve} ${targetY}, ` +
+                                `${targetX} ${targetY}`
+                            );
+                    } else {
+                        pathData =
+                            (
+                                `M ${sourceX} ${sourceY} ` +
+                                `C ${sourceX + 8} ${sourceY}, ` +
+                                `${targetX - 8} ${targetY}, ` +
+                                `${targetX} ${targetY}`
+                            );
+                    }
+
+                    path.setAttribute(
+                        "d",
+                        pathData
+                    );
+
+                    mapConnections
+                        .appendChild(
+                            path
+                        );
+                }
+            );
+
+            this.workflowMapContent
+                .appendChild(
+                    mapConnections
+                );
+
+            /*
+             * Miniature widgets.
+             */
+            this.widgets.forEach(
+                (widget) => {
+                    const position =
+                        mapPositions.get(
+                            widget
+                        );
+
+                    const mapItem =
+                        document.createElement(
+                            "div"
+                        );
+
+                    mapItem.className =
+                        "workflow-map-item";
+
+                    if (
+                        this.selectedWidget ===
+                        widget
+                    ) {
+                        mapItem.classList.add(
+                            "selected"
+                        );
+                    }
+
+                    mapItem.title =
+                        widget.title;
+
+                    mapItem.style.left =
+                        `${position.left}px`;
+
+                    mapItem.style.top =
+                        `${position.top}px`;
+
+                    this.workflowMapContent
+                        .appendChild(
+                            mapItem
+                        );
+                }
+            );
         }
 
         /*
-        * Determine what part of the workspace
-        * is currently visible.
-        */
+         * Red rectangle representing the visible portion
+         * of the main workspace.
+         */
         const worldLeft =
-            -this.panX / this.zoom;
+            -this.panX /
+            this.zoom;
 
         const worldTop =
-            -this.panY / this.zoom;
+            -this.panY /
+            this.zoom;
 
         const visibleWorldWidth =
-            this.workspaceContainer.clientWidth /
+            this.workspaceContainer
+                .clientWidth /
             this.zoom;
 
         const visibleWorldHeight =
-            this.workspaceContainer.clientHeight /
+            this.workspaceContainer
+                .clientHeight /
             this.zoom;
 
-        /*
-        * Convert that visible area into mini-map coordinates.
-        */
         let viewportLeft =
-            (worldLeft / this.workspaceWidth) *
+            (
+                worldLeft /
+                this.workspaceWidth
+            ) *
             mapWidth;
 
         let viewportTop =
-            (worldTop / this.workspaceHeight) *
+            (
+                worldTop /
+                this.workspaceHeight
+            ) *
             mapHeight;
 
         let viewportWidth =
-            (visibleWorldWidth / this.workspaceWidth) *
+            (
+                visibleWorldWidth /
+                this.workspaceWidth
+            ) *
             mapWidth;
 
         let viewportHeight =
-            (visibleWorldHeight / this.workspaceHeight) *
+            (
+                visibleWorldHeight /
+                this.workspaceHeight
+            ) *
             mapHeight;
 
-        /*
-        * Prevent the viewport rectangle from becoming
-        * invisible or extending outside the map.
-        */
-        viewportWidth = Math.min(
-            mapWidth,
-            Math.max(8, viewportWidth)
-        );
-
-        viewportHeight = Math.min(
-            mapHeight,
-            Math.max(8, viewportHeight)
-        );
-
-        viewportLeft = Math.max(
-            0,
+        viewportWidth =
             Math.min(
-                mapWidth - viewportWidth,
-                viewportLeft
-            )
-        );
+                mapWidth,
+                Math.max(
+                    8,
+                    viewportWidth
+                )
+            );
 
-        viewportTop = Math.max(
-            0,
+        viewportHeight =
             Math.min(
-                mapHeight - viewportHeight,
-                viewportTop
-            )
-        );
+                mapHeight,
+                Math.max(
+                    8,
+                    viewportHeight
+                )
+            );
+
+        viewportLeft =
+            Math.max(
+                0,
+                Math.min(
+                    mapWidth -
+                        viewportWidth,
+                    viewportLeft
+                )
+            );
+
+        viewportTop =
+            Math.max(
+                0,
+                Math.min(
+                    mapHeight -
+                        viewportHeight,
+                    viewportTop
+                )
+            );
 
         const viewport =
-            document.createElement("div");
+            document.createElement(
+                "div"
+            );
 
         viewport.className =
             "workflow-map-viewport";
@@ -2280,9 +2498,10 @@ class Board {
         viewport.style.height =
             `${viewportHeight}px`;
 
-        this.workflowMapContent.appendChild(
-            viewport
-        );
+        this.workflowMapContent
+            .appendChild(
+                viewport
+            );
     }
 
     createPanelShowZone(side) {
@@ -2496,41 +2715,212 @@ class Board {
         this.scheduleSave();
     }
 
-    centerViewFromMap(event) {
+    startWorkflowMapDrag(event) {
+        if (event.button !== 0) {
+            return;
+        }
+
+        event.preventDefault();
+
+        this.isWorkflowMapDragging =
+            true;
+
+        this.workflowMapPointerId =
+            event.pointerId;
+
+        /*
+         * Grabbing the red viewport should not make it jump.
+         * Preserve the exact point where the user grabbed it.
+         */
+        const viewportElement =
+            event.target.closest
+                ? event.target.closest(
+                    ".workflow-map-viewport"
+                )
+                : null;
+
+        if (viewportElement) {
+            const viewportRect =
+                viewportElement
+                    .getBoundingClientRect();
+
+            const viewportCenterX =
+                viewportRect.left +
+                viewportRect.width / 2;
+
+            const viewportCenterY =
+                viewportRect.top +
+                viewportRect.height / 2;
+
+            this.workflowMapDragOffsetX =
+                event.clientX -
+                viewportCenterX;
+
+            this.workflowMapDragOffsetY =
+                event.clientY -
+                viewportCenterY;
+        } else {
+            /*
+             * Clicking outside the viewport jumps directly
+             * to that point and can immediately continue as
+             * a click-and-hold drag.
+             */
+            this.workflowMapDragOffsetX = 0;
+            this.workflowMapDragOffsetY = 0;
+        }
+
+        this.workflowMapContent
+            .setPointerCapture(
+                event.pointerId
+            );
+
+        this.workflowMapContent
+            .classList.add(
+                "map-dragging"
+            );
+
+        this.moveViewFromWorkflowMap(
+            event.clientX,
+            event.clientY
+        );
+    }
+
+    dragWorkflowMap(event) {
+        if (
+            !this.isWorkflowMapDragging
+        ) {
+            return;
+        }
+
+        if (
+            event.pointerId !==
+            this.workflowMapPointerId
+        ) {
+            return;
+        }
+
+        this.moveViewFromWorkflowMap(
+            event.clientX,
+            event.clientY
+        );
+    }
+
+    moveViewFromWorkflowMap(
+        clientX,
+        clientY
+    ) {
+        if (!this.workflowMapContent) {
+            return;
+        }
+
         const mapRect =
             this.workflowMapContent
                 .getBoundingClientRect();
 
-        const mapX =
-            event.clientX - mapRect.left;
+        let mapX =
+            clientX -
+            this.workflowMapDragOffsetX -
+            mapRect.left;
 
-        const mapY =
-            event.clientY - mapRect.top;
-        /*
-        * Convert mini-map coordinates back into
-        * workspace coordinates.
-        */
-        const worldX =
-            (mapX / mapRect.width) *
+        let mapY =
+            clientY -
+            this.workflowMapDragOffsetY -
+            mapRect.top;
+
+        mapX =
+            Math.max(
+                0,
+                Math.min(
+                    mapRect.width,
+                    mapX
+                )
+            );
+
+        mapY =
+            Math.max(
+                0,
+                Math.min(
+                    mapRect.height,
+                    mapY
+                )
+            );
+
+        const worldCenterX =
+            (
+                mapX /
+                mapRect.width
+            ) *
             this.workspaceWidth;
 
-        const worldY =
-            (mapY / mapRect.height) *
+        const worldCenterY =
+            (
+                mapY /
+                mapRect.height
+            ) *
             this.workspaceHeight;
 
-        /*
-        * Put that location in the center
-        * of the visible canvas.
-        */
         this.panX =
-            this.workspaceContainer.clientWidth / 2 -
-            worldX * this.zoom;
+            this.workspaceContainer
+                .clientWidth / 2 -
+            worldCenterX *
+                this.zoom;
 
         this.panY =
-            this.workspaceContainer.clientHeight / 2 -
-            worldY * this.zoom;
+            this.workspaceContainer
+                .clientHeight / 2 -
+            worldCenterY *
+                this.zoom;
 
+        this.constrainPan();
+
+        /*
+         * updateWorkspaceTransform() also refreshes the
+         * minimap, so the red viewport follows live.
+         */
         this.updateWorkspaceTransform();
+    }
+
+    stopWorkflowMapDrag(event) {
+        if (
+            !this.isWorkflowMapDragging
+        ) {
+            return;
+        }
+
+        if (
+            event.pointerId !==
+            this.workflowMapPointerId
+        ) {
+            return;
+        }
+
+        this.isWorkflowMapDragging =
+            false;
+
+        this.workflowMapContent
+            .classList.remove(
+                "map-dragging"
+            );
+
+        if (
+            this.workflowMapContent
+                .hasPointerCapture(
+                    event.pointerId
+                )
+        ) {
+            this.workflowMapContent
+                .releasePointerCapture(
+                    event.pointerId
+                );
+        }
+
+        this.workflowMapPointerId =
+            null;
+
+        this.workflowMapDragOffsetX = 0;
+        this.workflowMapDragOffsetY = 0;
+
+        this.scheduleSave();
     }
 
     centerWorkspace() {
@@ -3480,6 +3870,7 @@ class Board {
             connection
         );
 
+        this.updateWorkflowMap();
         this.scheduleSave();
 
         return connection;
@@ -3569,6 +3960,7 @@ class Board {
                     currentConnection !==
                     connection
             );
+
         this.updateConnectionPeek();
 
         const wasSelected =
@@ -3592,6 +3984,7 @@ class Board {
             this.updateStats();
         }
 
+        this.updateWorkflowMap();
         this.scheduleSave();
     }
 
