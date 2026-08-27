@@ -26,6 +26,8 @@ class Widget {
 
         this.dragOffsetX = 0;
         this.dragOffsetY = 0;
+
+        this.dragHistorySnapshot = null;
     }
 
     render() {
@@ -255,6 +257,14 @@ class Widget {
         this.broughtToFrontThisDrag =
             false;
 
+        /*
+         * Capture the exact pre-drag state. It is only
+         * committed to Undo history if this becomes a
+         * real drag instead of a normal click.
+         */
+        this.dragHistorySnapshot =
+            this.board.createHistorySnapshot();
+
         this.element.classList.add("dragging");
 
         this.element.setPointerCapture(event.pointerId);
@@ -288,6 +298,10 @@ class Widget {
                 );
 
             if (movementDistance >= 4) {
+                this.board.recordHistorySnapshot(
+                    this.dragHistorySnapshot
+                );
+
                 this.board.bringWidgetToFront(
                     this
                 );
@@ -342,6 +356,8 @@ class Widget {
 
         this.broughtToFrontThisDrag =
             false;
+
+        this.dragHistorySnapshot = null;
     }
 
     updatePosition() {

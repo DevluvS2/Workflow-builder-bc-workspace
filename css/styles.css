@@ -79,6 +79,82 @@ button {
     color: #d1d5db;
 }
 
+.history-controls {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+
+    margin-left: 4px;
+    padding-left: 8px;
+
+    border-left:
+        1px solid
+        rgb(148 163 184 / 28%);
+}
+
+.history-icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    width: 32px;
+    height: 32px;
+
+    padding: 0 !important;
+
+    border:
+        1px solid
+        transparent !important;
+
+    border-radius: 5px !important;
+
+    background-color:
+        transparent !important;
+
+    color: #e5e7eb !important;
+}
+
+.history-icon-button svg {
+    width: 19px;
+    height: 19px;
+
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+
+    pointer-events: none;
+}
+
+.history-icon-button:hover:not(:disabled) {
+    border-color:
+        rgb(148 163 184 / 35%) !important;
+
+    background-color:
+        #374151 !important;
+
+    color: white !important;
+}
+
+.history-icon-button:active:not(:disabled) {
+    background-color:
+        #4b5563 !important;
+}
+
+.history-icon-button:focus-visible {
+    outline:
+        2px solid
+        #60a5fa;
+
+    outline-offset: 1px;
+}
+
+.history-icon-button:disabled {
+    opacity: 0.28;
+    cursor: default;
+}
+
 /* Main application area */
 
 .main-area {

@@ -67,6 +67,17 @@ class Board {
 
         this.saveTimer = null;
 
+        /*
+         * Undo / Redo history.
+         *
+         * We store snapshots of editable workflow content
+         * (widgets + connections), not camera/panel state.
+         */
+        this.undoStack = [];
+        this.redoStack = [];
+        this.historyLimit = 100;
+        this.isApplyingHistory = false;
+
         document.addEventListener("keydown", (event) => {
             this.handleKeyDown(event);
         });
@@ -307,6 +318,111 @@ class Board {
         const helpButton = document.createElement("button");
         helpButton.textContent = "Help";
 
+
+        /* =============================
+         * Undo / Redo toolbar controls
+         * ============================= */
+        const historyControls =
+            document.createElement("div");
+
+        historyControls.className =
+            "history-controls";
+
+
+        const undoButton =
+            document.createElement("button");
+
+        undoButton.className =
+            "history-icon-button";
+
+        undoButton.type = "button";
+        undoButton.title = "Undo (Ctrl+Z)";
+        undoButton.setAttribute(
+            "aria-label",
+            "Undo"
+        );
+
+        undoButton.innerHTML =
+            `
+            <svg
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+            >
+                <path
+                    d="M9 7H16.25C19.43 7 22 9.57 22 12.75C22 15.93 19.43 18.5 16.25 18.5H13"
+                ></path>
+                <path
+                    d="M9 7L12.5 3.5"
+                ></path>
+                <path
+                    d="M9 7L12.5 10.5"
+                ></path>
+            </svg>
+            `;
+
+
+        const redoButton =
+            document.createElement("button");
+
+        redoButton.className =
+            "history-icon-button";
+
+        redoButton.type = "button";
+        redoButton.title =
+            "Redo (Ctrl+Y / Ctrl+Shift+Z)";
+
+        redoButton.setAttribute(
+            "aria-label",
+            "Redo"
+        );
+
+        redoButton.innerHTML =
+            `
+            <svg
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+            >
+                <path
+                    d="M15 7H7.75C4.57 7 2 9.57 2 12.75C2 15.93 4.57 18.5 7.75 18.5H11"
+                ></path>
+                <path
+                    d="M15 7L11.5 3.5"
+                ></path>
+                <path
+                    d="M15 7L11.5 10.5"
+                ></path>
+            </svg>
+            `;
+
+
+        undoButton.addEventListener(
+            "click",
+            () => {
+                this.undo();
+            }
+        );
+
+        redoButton.addEventListener(
+            "click",
+            () => {
+                this.redo();
+            }
+        );
+
+
+        historyControls.appendChild(
+            undoButton
+        );
+
+        historyControls.appendChild(
+            redoButton
+        );
+
+
+        this.undoButton = undoButton;
+        this.redoButton = redoButton;
+
+
         const spacer = document.createElement("div");
         spacer.className = "menu-spacer";
 
@@ -320,8 +436,11 @@ class Board {
         menuBar.appendChild(editButton);
         menuBar.appendChild(viewMenu);
         menuBar.appendChild(helpButton);
+        menuBar.appendChild(historyControls);
         menuBar.appendChild(spacer);
         menuBar.appendChild(zoomDisplay);
+
+        this.updateHistoryButtons();
 
         return menuBar;
     }
@@ -748,6 +867,8 @@ class Board {
     }
 
     createWidget(type = "Process") {
+        this.recordHistoryState();
+
         const id = `widget-${this.nextWidgetNumber}`;
 
         const title = `${type} ${this.nextWidgetNumber}`;
@@ -821,6 +942,8 @@ class Board {
         if (widgetIndex === -1) {
             return;
         }
+
+        this.recordHistoryState();
 
         this.removeConnectionsForWidget(
             widget
@@ -1626,6 +1749,35 @@ class Board {
             return;
         }
 
+        const modifierKey =
+            event.ctrlKey ||
+            event.metaKey;
+
+        if (
+            modifierKey &&
+            !event.shiftKey &&
+            event.key.toLowerCase() === "z"
+        ) {
+            event.preventDefault();
+            this.undo();
+            return;
+        }
+
+        if (
+            modifierKey &&
+            (
+                event.key.toLowerCase() === "y" ||
+                (
+                    event.shiftKey &&
+                    event.key.toLowerCase() === "z"
+                )
+            )
+        ) {
+            event.preventDefault();
+            this.redo();
+            return;
+        }
+
         if (event.key === "Escape") {
             this.clearPinnedWidgetPeek();
 
@@ -1778,9 +1930,35 @@ class Board {
         titleInput.type = "text";
         titleInput.value = widget.title;
 
-        titleInput.addEventListener("input", () => {
-            widget.setTitle(titleInput.value);
-        });
+        let titleHistoryCaptured = false;
+
+        titleInput.addEventListener(
+            "input",
+            () => {
+                const nextTitle =
+                    titleInput.value.trim();
+
+                if (
+                    !titleHistoryCaptured &&
+                    nextTitle !== "" &&
+                    nextTitle !== widget.title
+                ) {
+                    this.recordHistoryState();
+                    titleHistoryCaptured = true;
+                }
+
+                widget.setTitle(
+                    titleInput.value
+                );
+            }
+        );
+
+        titleInput.addEventListener(
+            "blur",
+            () => {
+                titleHistoryCaptured = false;
+            }
+        );
 
         titleRow.appendChild(titleLabel);
         titleRow.appendChild(titleInput);
@@ -1795,9 +1973,35 @@ class Board {
         typeInput.type = "text";
         typeInput.value = widget.type;
 
-        typeInput.addEventListener("input", () => {
-            widget.setType(typeInput.value);
-        });
+        let typeHistoryCaptured = false;
+
+        typeInput.addEventListener(
+            "input",
+            () => {
+                const nextType =
+                    typeInput.value.trim();
+
+                if (
+                    !typeHistoryCaptured &&
+                    nextType !== "" &&
+                    nextType !== widget.type
+                ) {
+                    this.recordHistoryState();
+                    typeHistoryCaptured = true;
+                }
+
+                widget.setType(
+                    typeInput.value
+                );
+            }
+        );
+
+        typeInput.addEventListener(
+            "blur",
+            () => {
+                typeHistoryCaptured = false;
+            }
+        );
 
         typeRow.appendChild(typeLabel);
         typeRow.appendChild(typeInput);
@@ -2131,6 +2335,13 @@ class Board {
 
         if (!confirmed) {
             return;
+        }
+
+        if (
+            this.widgets.length > 0 ||
+            this.connections.length > 0
+        ) {
+            this.recordHistoryState();
         }
 
         this.clearWorkflow();
@@ -3144,6 +3355,8 @@ class Board {
                         }
                     }
 
+                    this.recordHistoryState();
+
                     this.applyWorkflowData(
                         workflowData
                     );
@@ -3315,6 +3528,196 @@ class Board {
         this.scheduleSave();
     }
 
+    createHistorySnapshot() {
+        return JSON.stringify(
+            {
+                widgets:
+                    this.widgets.map(
+                        (widget) =>
+                            widget.toJSON()
+                    ),
+
+                connections:
+                    this.connections.map(
+                        (connection) =>
+                            connection.toJSON()
+                    )
+            }
+        );
+    }
+
+    recordHistorySnapshot(snapshot) {
+        if (
+            this.isApplyingHistory ||
+            !snapshot
+        ) {
+            return;
+        }
+
+        const lastSnapshot =
+            this.undoStack[
+                this.undoStack.length - 1
+            ];
+
+        if (
+            lastSnapshot !== snapshot
+        ) {
+            this.undoStack.push(
+                snapshot
+            );
+
+            if (
+                this.undoStack.length >
+                this.historyLimit
+            ) {
+                this.undoStack.shift();
+            }
+        }
+
+        /*
+         * A fresh edit invalidates the previous redo path.
+         */
+        this.redoStack = [];
+
+        this.updateHistoryButtons();
+    }
+
+    recordHistoryState() {
+        this.recordHistorySnapshot(
+            this.createHistorySnapshot()
+        );
+    }
+
+    updateHistoryButtons() {
+        if (this.undoButton) {
+            this.undoButton.disabled =
+                this.undoStack.length === 0;
+        }
+
+        if (this.redoButton) {
+            this.redoButton.disabled =
+                this.redoStack.length === 0;
+        }
+    }
+
+    applyHistorySnapshot(snapshot) {
+        if (!snapshot) {
+            return;
+        }
+
+        let historyData;
+
+        try {
+            historyData =
+                JSON.parse(snapshot);
+        } catch (error) {
+            console.error(
+                "Could not restore history snapshot:",
+                error
+            );
+
+            return;
+        }
+
+        if (
+            !historyData ||
+            !Array.isArray(
+                historyData.widgets
+            ) ||
+            !Array.isArray(
+                historyData.connections
+            )
+        ) {
+            return;
+        }
+
+        clearTimeout(
+            this.saveTimer
+        );
+
+        this.isApplyingHistory = true;
+
+        try {
+            /*
+             * History snapshots intentionally omit zoom, pan,
+             * and panel state, so Undo/Redo changes workflow
+             * content without moving the user's camera.
+             */
+            this.applyWorkflowData(
+                historyData
+            );
+        } finally {
+            this.isApplyingHistory = false;
+        }
+
+        /*
+         * Undo/Redo leaves selection clear and saves
+         * the restored state immediately.
+         */
+        this.selectWidget(null);
+
+        this.saveState();
+        this.updateHistoryButtons();
+    }
+
+    undo() {
+        if (
+            this.undoStack.length === 0
+        ) {
+            return;
+        }
+
+        const currentSnapshot =
+            this.createHistorySnapshot();
+
+        const previousSnapshot =
+            this.undoStack.pop();
+
+        this.redoStack.push(
+            currentSnapshot
+        );
+
+        if (
+            this.redoStack.length >
+            this.historyLimit
+        ) {
+            this.redoStack.shift();
+        }
+
+        this.applyHistorySnapshot(
+            previousSnapshot
+        );
+    }
+
+    redo() {
+        if (
+            this.redoStack.length === 0
+        ) {
+            return;
+        }
+
+        const currentSnapshot =
+            this.createHistorySnapshot();
+
+        const nextSnapshot =
+            this.redoStack.pop();
+
+        this.undoStack.push(
+            currentSnapshot
+        );
+
+        if (
+            this.undoStack.length >
+            this.historyLimit
+        ) {
+            this.undoStack.shift();
+        }
+
+        this.applyHistorySnapshot(
+            nextSnapshot
+        );
+    }
+
     saveState() {
         try {
             const workflowData =
@@ -3335,6 +3738,10 @@ class Board {
     }
 
     scheduleSave() {
+        if (this.isApplyingHistory) {
+            return;
+        }
+
         clearTimeout(
             this.saveTimer
         );
@@ -3938,6 +4345,8 @@ class Board {
                 return;
             }
 
+            this.recordHistoryState();
+
             this.addConnection(
                 sourceWidget,
                 targetWidget
@@ -4049,7 +4458,10 @@ class Board {
         );
     }
 
-    removeConnection(connection) {
+    removeConnection(
+        connection,
+        recordHistory = true
+    ) {
         const connectionIndex =
             this.connections.indexOf(
                 connection
@@ -4057,6 +4469,10 @@ class Board {
 
         if (connectionIndex === -1) {
             return;
+        }
+
+        if (recordHistory) {
+            this.recordHistoryState();
         }
 
         this.hoverPeekConnections =
@@ -4111,7 +4527,8 @@ class Board {
         connectionsToRemove.forEach(
             (connection) => {
                 this.removeConnection(
-                    connection
+                    connection,
+                    false
                 );
             }
         );
