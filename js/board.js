@@ -41,6 +41,18 @@ class Board {
             this.handleKeyDown(event);
         });
 
+        document.addEventListener(
+            "pointerdown",
+            (event) => {
+                if (
+                    this.contextMenu &&
+                    !this.contextMenu.contains(event.target)
+                ) {
+                    this.hideContextMenu();
+                }
+            }
+        );
+
         this.render();
     }
 
@@ -1864,5 +1876,12 @@ class Board {
         this.contextMenu = menu;
     }
 
+    openWidgetProperties(widget) {
+        this.selectWidget(widget);
+
+        if (!this.rightPanelVisible) {
+            this.togglePanel("right");
+        }
+    }
 
 }
