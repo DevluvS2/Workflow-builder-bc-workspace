@@ -3,7 +3,9 @@ class Connection {
         board,
         id,
         sourceWidget,
-        targetWidget
+        targetWidget,
+        sourcePortId = null,
+        targetPortId = null
     ) {
         this.board = board;
         this.id = id;
@@ -13,6 +15,18 @@ class Connection {
 
         this.targetWidget =
             targetWidget;
+
+        this.sourcePortId =
+            sourcePortId ||
+            (sourceWidget.outputs[0]
+                ? sourceWidget.outputs[0].id
+                : null);
+
+        this.targetPortId =
+            targetPortId ||
+            (targetWidget.inputs[0]
+                ? targetWidget.inputs[0].id
+                : null);
 
         this.element = null;
 
@@ -157,11 +171,15 @@ class Connection {
 
         const sourcePoint =
             this.sourceWidget
-                .getOutputPortPosition();
+                .getOutputPortPosition(
+                    this.sourcePortId
+                );
 
         const rawTargetPoint =
             this.targetWidget
-                .getInputPortPosition();
+                .getInputPortPosition(
+                    this.targetPortId
+                );
 
 
         /*
@@ -597,8 +615,14 @@ class Connection {
             sourceWidgetId:
                 this.sourceWidget.id,
 
+            sourcePortId:
+                this.sourcePortId,
+
             targetWidgetId:
-                this.targetWidget.id
+                this.targetWidget.id,
+
+            targetPortId:
+                this.targetPortId
         };
     }
 }

@@ -19,6 +19,7 @@ class Board {
         this.nextConnectionNumber = 1;
 
         this.connectionSourceWidget = null;
+        this.connectionSourcePortId = null;
         this.connectionPreviewElement = null;
 
         this.connectionMoveHandler = null;
@@ -27,11 +28,14 @@ class Board {
 
         this.contextMenu = null;
 
+        /* Custom in-app dialog state. */
+        this.activeDialog = null;
+
         this.leftPanelVisible = true;
         this.rightPanelVisible = true;
 
         this.leftPanelWidth = 220;
-        this.rightPanelWidth = 260;
+        this.rightPanelWidth = 320;
         
         this.workspaceWidth = 6000;
         this.workspaceHeight = 4000;
@@ -77,6 +81,19 @@ class Board {
         this.redoStack = [];
         this.historyLimit = 100;
         this.isApplyingHistory = false;
+
+        /*
+         * Workflow execution / validation state.
+         */
+        this.isWorkflowRunning = false;
+        this.executionRunId = 0;
+        this.lastRunRuntimeMs = 0;
+        this.lastRunMemoryKb = 0;
+        this.lastValidationReport = {
+            valid: true,
+            errors: [],
+            warnings: []
+        };
 
         document.addEventListener("keydown", (event) => {
             this.handleKeyDown(event);
@@ -125,7 +142,7 @@ class Board {
         menuBar.className = "menu-bar";
 
         /* =============================
-         * File menu
+         * File
          * ============================= */
         const fileMenu = document.createElement("div");
         fileMenu.className = "dropdown-menu";
@@ -139,23 +156,16 @@ class Board {
 
         const newMenuItem = document.createElement("button");
         newMenuItem.textContent = "New";
-
-        newMenuItem.addEventListener(
-            "click",
-            () => {
-                this.createNewWorkflow();
-            }
-        );
+        newMenuItem.addEventListener("click", () => {
+            this.createNewWorkflow();
+        });
 
         const exportMenuItem = document.createElement("button");
         exportMenuItem.textContent = "Export";
-
-        exportMenuItem.addEventListener(
-            "click",
-            () => {
-                this.exportWorkflow();
-            }
-        );
+        exportMenuItem.title = "Export workflow JSON (Ctrl+S)";
+        exportMenuItem.addEventListener("click", () => {
+            this.exportWorkflow();
+        });
 
         const importMenuItem = document.createElement("button");
         importMenuItem.textContent = "Import";
@@ -163,7 +173,6 @@ class Board {
         fileDropdown.appendChild(newMenuItem);
         fileDropdown.appendChild(exportMenuItem);
         fileDropdown.appendChild(importMenuItem);
-
         fileMenu.appendChild(fileButton);
         fileMenu.appendChild(fileDropdown);
 
@@ -172,45 +181,65 @@ class Board {
         importInput.accept = ".json,application/json";
         importInput.hidden = true;
 
-        importMenuItem.addEventListener(
-            "click",
-            () => {
-                importInput.click();
+        importMenuItem.addEventListener("click", () => {
+            importInput.click();
+        });
+
+        importInput.addEventListener("change", (event) => {
+            const selectedFile = event.target.files[0];
+
+            if (selectedFile) {
+                this.importWorkflow(selectedFile);
             }
-        );
 
-        importInput.addEventListener(
-            "change",
-            (event) => {
-                const selectedFile =
-                    event.target.files[0];
+            event.target.value = "";
+        });
 
-                if (selectedFile) {
-                    this.importWorkflow(
-                        selectedFile
-                    );
-                }
-
-                event.target.value = "";
-            }
-        );
-
-        /*
-         * Keep the hidden file input in the DOM so
-         * File -> Import works consistently.
-         */
         fileMenu.appendChild(importInput);
 
 
         /* =============================
-         * Edit menu placeholder
+         * Edit
          * ============================= */
+        const editMenu = document.createElement("div");
+        editMenu.className = "dropdown-menu";
+
         const editButton = document.createElement("button");
+        editButton.className = "dropdown-button";
         editButton.textContent = "Edit";
+
+        const editDropdown = document.createElement("div");
+        editDropdown.className = "dropdown-content";
+
+        const undoMenuItem = document.createElement("button");
+        undoMenuItem.textContent = "Undo   Ctrl+Z";
+        undoMenuItem.addEventListener("click", () => this.undo());
+
+        const redoMenuItem = document.createElement("button");
+        redoMenuItem.textContent = "Redo   Ctrl+Y";
+        redoMenuItem.addEventListener("click", () => this.redo());
+
+        const duplicateMenuItem = document.createElement("button");
+        duplicateMenuItem.textContent = "Duplicate Selected   Ctrl+D";
+        duplicateMenuItem.addEventListener("click", () => {
+            if (this.selectedWidget) {
+                this.duplicateWidget(this.selectedWidget);
+            }
+        });
+
+        const editDivider = document.createElement("div");
+        editDivider.className = "dropdown-divider";
+
+        editDropdown.appendChild(undoMenuItem);
+        editDropdown.appendChild(redoMenuItem);
+        editDropdown.appendChild(editDivider);
+        editDropdown.appendChild(duplicateMenuItem);
+        editMenu.appendChild(editButton);
+        editMenu.appendChild(editDropdown);
 
 
         /* =============================
-         * View dropdown
+         * View
          * ============================= */
         const viewMenu = document.createElement("div");
         viewMenu.className = "dropdown-menu";
@@ -229,10 +258,7 @@ class Board {
         const leftPanelCheckbox = document.createElement("input");
         leftPanelCheckbox.type = "checkbox";
         leftPanelCheckbox.checked = this.leftPanelVisible;
-        leftPanelCheckbox.setAttribute(
-            "aria-label",
-            "Show left panel"
-        );
+        leftPanelCheckbox.setAttribute("aria-label", "Show left panel");
 
         const leftPanelText = document.createElement("span");
         leftPanelText.textContent = "Left Panel";
@@ -246,10 +272,7 @@ class Board {
         const rightPanelCheckbox = document.createElement("input");
         rightPanelCheckbox.type = "checkbox";
         rightPanelCheckbox.checked = this.rightPanelVisible;
-        rightPanelCheckbox.setAttribute(
-            "aria-label",
-            "Show right panel"
-        );
+        rightPanelCheckbox.setAttribute("aria-label", "Show right panel");
 
         const rightPanelText = document.createElement("span");
         rightPanelText.textContent = "Right Panel";
@@ -257,37 +280,20 @@ class Board {
         rightPanelOption.appendChild(rightPanelCheckbox);
         rightPanelOption.appendChild(rightPanelText);
 
-        /*
-         * Save references so the checkmarks also update when
-         * a panel is hidden with its own Hide button or shown
-         * again from the edge of the workspace.
-         */
         this.leftPanelViewCheckbox = leftPanelCheckbox;
         this.rightPanelViewCheckbox = rightPanelCheckbox;
 
-        leftPanelCheckbox.addEventListener(
-            "change",
-            () => {
-                if (
-                    leftPanelCheckbox.checked !==
-                    this.leftPanelVisible
-                ) {
-                    this.togglePanel("left");
-                }
+        leftPanelCheckbox.addEventListener("change", () => {
+            if (leftPanelCheckbox.checked !== this.leftPanelVisible) {
+                this.togglePanel("left");
             }
-        );
+        });
 
-        rightPanelCheckbox.addEventListener(
-            "change",
-            () => {
-                if (
-                    rightPanelCheckbox.checked !==
-                    this.rightPanelVisible
-                ) {
-                    this.togglePanel("right");
-                }
+        rightPanelCheckbox.addEventListener("change", () => {
+            if (rightPanelCheckbox.checked !== this.rightPanelVisible) {
+                this.togglePanel("right");
             }
-        );
+        });
 
         const viewDivider = document.createElement("div");
         viewDivider.className = "dropdown-divider";
@@ -295,133 +301,120 @@ class Board {
         const resetViewMenuItem = document.createElement("button");
         resetViewMenuItem.className = "reset-view-menu-item";
         resetViewMenuItem.textContent = "Reset View";
-
-        resetViewMenuItem.addEventListener(
-            "click",
-            () => {
-                this.resetView();
-            }
-        );
+        resetViewMenuItem.addEventListener("click", () => {
+            this.resetView();
+        });
 
         viewDropdown.appendChild(leftPanelOption);
         viewDropdown.appendChild(rightPanelOption);
         viewDropdown.appendChild(viewDivider);
         viewDropdown.appendChild(resetViewMenuItem);
-
         viewMenu.appendChild(viewButton);
         viewMenu.appendChild(viewDropdown);
 
 
         /* =============================
-         * Help menu placeholder
+         * Workflow
          * ============================= */
-        const helpButton = document.createElement("button");
-        helpButton.textContent = "Help";
+        const workflowMenu = document.createElement("div");
+        workflowMenu.className = "dropdown-menu";
+
+        const workflowButton = document.createElement("button");
+        workflowButton.className = "dropdown-button";
+        workflowButton.textContent = "Workflow";
+
+        const workflowDropdown = document.createElement("div");
+        workflowDropdown.className = "dropdown-content workflow-dropdown-content";
+
+        const runMenuItem = document.createElement("button");
+        runMenuItem.textContent = "▶  Run Workflow   Ctrl+Enter";
+        runMenuItem.addEventListener("click", () => {
+            this.runWorkflow();
+        });
+
+        const validateMenuItem = document.createElement("button");
+        validateMenuItem.textContent = "✓  Validate Workflow";
+        validateMenuItem.addEventListener("click", () => {
+            this.validateWorkflow(true);
+        });
+
+        const stopMenuItem = document.createElement("button");
+        stopMenuItem.textContent = "■  Stop Run";
+        stopMenuItem.addEventListener("click", () => {
+            this.stopWorkflowRun();
+        });
+
+        const workflowDivider = document.createElement("div");
+        workflowDivider.className = "dropdown-divider";
+
+        const resetStatusMenuItem = document.createElement("button");
+        resetStatusMenuItem.textContent = "Reset Status Labels";
+        resetStatusMenuItem.addEventListener("click", () => {
+            this.resetWorkflowStatuses();
+        });
+
+        workflowDropdown.appendChild(runMenuItem);
+        workflowDropdown.appendChild(validateMenuItem);
+        workflowDropdown.appendChild(stopMenuItem);
+        workflowDropdown.appendChild(workflowDivider);
+        workflowDropdown.appendChild(resetStatusMenuItem);
+        workflowMenu.appendChild(workflowButton);
+        workflowMenu.appendChild(workflowDropdown);
+
+        this.runWorkflowMenuItem = runMenuItem;
+        this.stopWorkflowMenuItem = stopMenuItem;
 
 
         /* =============================
-         * Undo / Redo toolbar controls
+         * Help
          * ============================= */
-        const historyControls =
-            document.createElement("div");
+        const helpButton = document.createElement("button");
+        helpButton.textContent = "Help";
+        helpButton.addEventListener("click", () => {
+            this.showShortcutHelp();
+        });
 
-        historyControls.className =
-            "history-controls";
 
+        /* =============================
+         * Undo / Redo icon toolbar
+         * ============================= */
+        const historyControls = document.createElement("div");
+        historyControls.className = "history-controls";
 
-        const undoButton =
-            document.createElement("button");
-
-        undoButton.className =
-            "history-icon-button";
-
+        const undoButton = document.createElement("button");
+        undoButton.className = "history-icon-button";
         undoButton.type = "button";
         undoButton.title = "Undo (Ctrl+Z)";
-        undoButton.setAttribute(
-            "aria-label",
-            "Undo"
-        );
-
-        undoButton.innerHTML =
-            `
-            <svg
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-            >
-                <path
-                    d="M9 7H16.25C19.43 7 22 9.57 22 12.75C22 15.93 19.43 18.5 16.25 18.5H13"
-                ></path>
-                <path
-                    d="M9 7L12.5 3.5"
-                ></path>
-                <path
-                    d="M9 7L12.5 10.5"
-                ></path>
+        undoButton.setAttribute("aria-label", "Undo");
+        undoButton.innerHTML = `
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M9 7H16.25C19.43 7 22 9.57 22 12.75C22 15.93 19.43 18.5 16.25 18.5H13"></path>
+                <path d="M9 7L12.5 3.5"></path>
+                <path d="M9 7L12.5 10.5"></path>
             </svg>
-            `;
+        `;
 
-
-        const redoButton =
-            document.createElement("button");
-
-        redoButton.className =
-            "history-icon-button";
-
+        const redoButton = document.createElement("button");
+        redoButton.className = "history-icon-button";
         redoButton.type = "button";
-        redoButton.title =
-            "Redo (Ctrl+Y / Ctrl+Shift+Z)";
-
-        redoButton.setAttribute(
-            "aria-label",
-            "Redo"
-        );
-
-        redoButton.innerHTML =
-            `
-            <svg
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-            >
-                <path
-                    d="M15 7H7.75C4.57 7 2 9.57 2 12.75C2 15.93 4.57 18.5 7.75 18.5H11"
-                ></path>
-                <path
-                    d="M15 7L11.5 3.5"
-                ></path>
-                <path
-                    d="M15 7L11.5 10.5"
-                ></path>
+        redoButton.title = "Redo (Ctrl+Y / Ctrl+Shift+Z)";
+        redoButton.setAttribute("aria-label", "Redo");
+        redoButton.innerHTML = `
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M15 7H7.75C4.57 7 2 9.57 2 12.75C2 15.93 4.57 18.5 7.75 18.5H11"></path>
+                <path d="M15 7L11.5 3.5"></path>
+                <path d="M15 7L11.5 10.5"></path>
             </svg>
-            `;
+        `;
 
+        undoButton.addEventListener("click", () => this.undo());
+        redoButton.addEventListener("click", () => this.redo());
 
-        undoButton.addEventListener(
-            "click",
-            () => {
-                this.undo();
-            }
-        );
-
-        redoButton.addEventListener(
-            "click",
-            () => {
-                this.redo();
-            }
-        );
-
-
-        historyControls.appendChild(
-            undoButton
-        );
-
-        historyControls.appendChild(
-            redoButton
-        );
-
+        historyControls.appendChild(undoButton);
+        historyControls.appendChild(redoButton);
 
         this.undoButton = undoButton;
         this.redoButton = redoButton;
-
 
         const spacer = document.createElement("div");
         spacer.className = "menu-spacer";
@@ -429,12 +422,12 @@ class Board {
         const zoomDisplay = document.createElement("span");
         zoomDisplay.className = "zoom-display";
         zoomDisplay.textContent = "Zoom: 100%";
-
         this.zoomDisplay = zoomDisplay;
 
         menuBar.appendChild(fileMenu);
-        menuBar.appendChild(editButton);
+        menuBar.appendChild(editMenu);
         menuBar.appendChild(viewMenu);
+        menuBar.appendChild(workflowMenu);
         menuBar.appendChild(helpButton);
         menuBar.appendChild(historyControls);
         menuBar.appendChild(spacer);
@@ -1737,11 +1730,15 @@ class Board {
                 if (coveringWidgets.length > 0) {
                     const sourcePort =
                         connection.sourceWidget
-                            .outputPortElement;
+                            .getOutputPortElement(
+                                connection.sourcePortId
+                            );
 
                     const targetPort =
                         connection.targetWidget
-                            .inputPortElement;
+                            .getInputPortElement(
+                                connection.targetPortId
+                            );
 
 
                     if (sourcePort) {
@@ -1790,23 +1787,33 @@ class Board {
     }
 
     startInputConnectionPeek(
-        widget
+        widget,
+        inputPortId = null
     ) {
         if (!widget) {
             return;
         }
 
-
         const incomingConnections =
             this.connections.filter(
                 (connection) => {
-                    return (
-                        connection.targetWidget ===
+                    if (
+                        connection.targetWidget !==
                         widget
+                    ) {
+                        return false;
+                    }
+
+                    if (!inputPortId) {
+                        return true;
+                    }
+
+                    return (
+                        connection.targetPortId ===
+                        inputPortId
                     );
                 }
             );
-
 
         this.hoverPeekConnections =
             incomingConnections;
@@ -1815,18 +1822,14 @@ class Board {
     }
 
     stopInputConnectionPeek(
-        widget
+        widget,
+        inputPortId = null
     ) {
         this.hoverPeekConnections = [];
-
         this.updateConnectionPeek();
     }
 
-    handleKeyDown(event) {
-        /*
-        * Do not delete widgets while the user is typing
-        * inside an input field.
-        */
+    async handleKeyDown(event) {
         const activeElement = document.activeElement;
 
         const isTyping =
@@ -1834,10 +1837,16 @@ class Board {
             (
                 activeElement.tagName === "INPUT" ||
                 activeElement.tagName === "TEXTAREA" ||
+                activeElement.tagName === "SELECT" ||
                 activeElement.isContentEditable
             );
 
         if (isTyping) {
+            return;
+        }
+
+        /* While a custom dialog is open, it owns keyboard input. */
+        if (this.activeDialog) {
             return;
         }
 
@@ -1870,9 +1879,43 @@ class Board {
             return;
         }
 
+        if (
+            modifierKey &&
+            event.key.toLowerCase() === "d"
+        ) {
+            event.preventDefault();
+
+            if (this.selectedWidget) {
+                this.duplicateWidget(
+                    this.selectedWidget
+                );
+            }
+
+            return;
+        }
+
+        if (
+            modifierKey &&
+            event.key.toLowerCase() === "s"
+        ) {
+            event.preventDefault();
+            this.exportWorkflow();
+            return;
+        }
+
+        if (
+            modifierKey &&
+            event.key === "Enter"
+        ) {
+            event.preventDefault();
+            this.runWorkflow();
+            return;
+        }
+
         if (event.key === "Escape") {
             this.clearPinnedWidgetPeek();
-
+            this.hideContextMenu();
+            this.selectWidget(null);
             return;
         }
 
@@ -1883,9 +1926,13 @@ class Board {
             event.preventDefault();
 
             const confirmed =
-                window.confirm(
-                    `Delete connection from "${this.selectedConnection.sourceWidget.title}" to "${this.selectedConnection.targetWidget.title}"?`
-                );
+                await this.showConfirmDialog({
+                    title: "Delete Connection",
+                    message:
+                        `Delete connection from "${this.selectedConnection.sourceWidget.title}" to "${this.selectedConnection.targetWidget.title}"?`,
+                    confirmLabel: "Delete",
+                    danger: true
+                });
 
             if (confirmed) {
                 this.removeConnection(
@@ -1902,12 +1949,19 @@ class Board {
         ) {
             event.preventDefault();
 
-            const confirmed = window.confirm(
-                `Delete "${this.selectedWidget.title}"?`
-            );
+            const confirmed =
+                await this.showConfirmDialog({
+                    title: "Delete Widget",
+                    message:
+                        `Delete "${this.selectedWidget.title}"?`,
+                    confirmLabel: "Delete",
+                    danger: true
+                });
 
             if (confirmed) {
-                this.removeWidget(this.selectedWidget);
+                this.removeWidget(
+                    this.selectedWidget
+                );
             }
         }
     }
@@ -2009,126 +2063,1336 @@ class Board {
         this.propertiesPanelContent.appendChild(message);
     }
 
+    createPropertiesSection(
+        title,
+        description = ""
+    ) {
+        const section =
+            document.createElement("section");
+
+        section.className =
+            "property-section";
+
+        const heading =
+            document.createElement("div");
+
+        heading.className =
+            "property-section-title";
+
+        heading.textContent = title;
+        section.appendChild(heading);
+
+        if (description) {
+            const text =
+                document.createElement("p");
+
+            text.className =
+                "property-section-description";
+
+            text.textContent = description;
+            section.appendChild(text);
+        }
+
+        const body =
+            document.createElement("div");
+
+        body.className =
+            "property-section-body";
+
+        section.appendChild(body);
+
+        return {
+            section,
+            body
+        };
+    }
+
+    getIncomingConnection(
+        widget,
+        inputPortId
+    ) {
+        return (
+            this.connections.find(
+                (connection) =>
+                    connection.targetWidget ===
+                        widget &&
+                    connection.targetPortId ===
+                        inputPortId
+            ) || null
+        );
+    }
+
+    getOutgoingConnections(
+        widget,
+        outputPortId
+    ) {
+        return this.connections.filter(
+            (connection) =>
+                connection.sourceWidget ===
+                    widget &&
+                connection.sourcePortId ===
+                    outputPortId
+        );
+    }
+
+    propagateOutputValue(
+        sourceWidget,
+        outputPortId
+    ) {
+        if (!sourceWidget) {
+            return;
+        }
+
+        const output =
+            sourceWidget.getOutputById(
+                outputPortId
+            );
+
+        if (!output) {
+            return;
+        }
+
+        this.getOutgoingConnections(
+            sourceWidget,
+            outputPortId
+        ).forEach(
+            (connection) => {
+                const targetInput =
+                    connection.targetWidget
+                        .getInputById(
+                            connection.targetPortId
+                        );
+
+                if (targetInput) {
+                    targetInput.value =
+                        output.value;
+
+                    connection.targetWidget
+                        .refreshContent();
+                }
+            }
+        );
+    }
+
+    getInputSourceSelectionValue(
+        connection
+    ) {
+        if (!connection) {
+            return "manual";
+        }
+
+        return (
+            `${connection.sourceWidget.id}::` +
+            `${connection.sourcePortId}`
+        );
+    }
+
+    parseInputSourceSelection(
+        selectionValue
+    ) {
+        if (
+            !selectionValue ||
+            selectionValue === "manual"
+        ) {
+            return null;
+        }
+
+        const separatorIndex =
+            selectionValue.indexOf("::");
+
+        if (separatorIndex === -1) {
+            return null;
+        }
+
+        return {
+            widgetId:
+                selectionValue.slice(
+                    0,
+                    separatorIndex
+                ),
+
+            portId:
+                selectionValue.slice(
+                    separatorIndex + 2
+                )
+        };
+    }
+
+    connectInputFromSource(
+        targetWidget,
+        targetPortId,
+        selectionValue
+    ) {
+        if (
+            !targetWidget ||
+            !targetWidget.getInputById(
+                targetPortId
+            )
+        ) {
+            return;
+        }
+
+        const input =
+            targetWidget.getInputById(
+                targetPortId
+            );
+
+        const existingConnections =
+            this.connections.filter(
+                (connection) =>
+                    connection.targetWidget ===
+                        targetWidget &&
+                    connection.targetPortId ===
+                        targetPortId
+            );
+
+        const sourceSelection =
+            this.parseInputSourceSelection(
+                selectionValue
+            );
+
+        if (!sourceSelection) {
+            if (
+                existingConnections.length === 0
+            ) {
+                input.value =
+                    input.manualValue;
+
+                targetWidget.refreshContent();
+                return;
+            }
+
+            this.recordHistoryState();
+
+            existingConnections.forEach(
+                (connection) => {
+                    this.removeConnection(
+                        connection,
+                        false
+                    );
+                }
+            );
+
+            input.value =
+                input.manualValue;
+
+            targetWidget.refreshContent();
+            this.showWidgetProperties(
+                targetWidget
+            );
+            this.scheduleSave();
+            return;
+        }
+
+        const sourceWidget =
+            this.widgets.find(
+                (widget) =>
+                    widget.id ===
+                    sourceSelection.widgetId
+            );
+
+        const sourcePort =
+            sourceWidget
+                ? sourceWidget.getOutputById(
+                    sourceSelection.portId
+                )
+                : null;
+
+        if (
+            !sourceWidget ||
+            !sourcePort ||
+            sourceWidget === targetWidget
+        ) {
+            return;
+        }
+
+        if (
+            existingConnections.length === 1 &&
+            existingConnections[0]
+                .sourceWidget === sourceWidget &&
+            existingConnections[0]
+                .sourcePortId ===
+                sourcePort.id
+        ) {
+            return;
+        }
+
+        this.recordHistoryState();
+
+        existingConnections.forEach(
+            (connection) => {
+                this.removeConnection(
+                    connection,
+                    false
+                );
+            }
+        );
+
+        this.addConnection(
+            sourceWidget,
+            targetWidget,
+            sourcePort.id,
+            targetPortId
+        );
+
+        input.value = sourcePort.value;
+        targetWidget.refreshContent();
+        this.showWidgetProperties(
+            targetWidget
+        );
+        this.scheduleSave();
+    }
+
+    addWidgetInput(widget) {
+        if (!widget) {
+            return;
+        }
+
+        this.recordHistoryState();
+        widget.addInput();
+        this.showWidgetProperties(widget);
+        this.scheduleSave();
+    }
+
+    addWidgetOutput(widget) {
+        if (!widget) {
+            return;
+        }
+
+        this.recordHistoryState();
+        widget.addOutput();
+        this.showWidgetProperties(widget);
+        this.scheduleSave();
+    }
+
+    removeWidgetInput(
+        widget,
+        inputPortId
+    ) {
+        if (
+            !widget ||
+            !widget.getInputById(
+                inputPortId
+            )
+        ) {
+            return;
+        }
+
+        this.recordHistoryState();
+
+        this.connections
+            .filter(
+                (connection) =>
+                    connection.targetWidget ===
+                        widget &&
+                    connection.targetPortId ===
+                        inputPortId
+            )
+            .forEach(
+                (connection) => {
+                    this.removeConnection(
+                        connection,
+                        false
+                    );
+                }
+            );
+
+        widget.removeInput(
+            inputPortId
+        );
+
+        this.showWidgetProperties(widget);
+        this.scheduleSave();
+    }
+
+    removeWidgetOutput(
+        widget,
+        outputPortId
+    ) {
+        if (
+            !widget ||
+            !widget.getOutputById(
+                outputPortId
+            )
+        ) {
+            return;
+        }
+
+        this.recordHistoryState();
+
+        this.connections
+            .filter(
+                (connection) =>
+                    connection.sourceWidget ===
+                        widget &&
+                    connection.sourcePortId ===
+                        outputPortId
+            )
+            .forEach(
+                (connection) => {
+                    this.removeConnection(
+                        connection,
+                        false
+                    );
+                }
+            );
+
+        widget.removeOutput(
+            outputPortId
+        );
+
+        this.showWidgetProperties(widget);
+        this.scheduleSave();
+    }
+
     showWidgetProperties(widget) {
+        if (
+            !this.propertiesPanelContent ||
+            !widget
+        ) {
+            return;
+        }
+
         this.propertiesPanelContent.innerHTML = "";
 
-        const titleRow = document.createElement("div");
+        /* =============================
+         * General
+         * ============================= */
+        const general =
+            this.createPropertiesSection(
+                "General"
+            );
+
+        const titleRow =
+            document.createElement("div");
         titleRow.className = "property-row";
 
-        const titleLabel = document.createElement("label");
+        const titleLabel =
+            document.createElement("label");
         titleLabel.textContent = "Title";
 
-        const titleInput = document.createElement("input");
+        const titleInput =
+            document.createElement("input");
         titleInput.type = "text";
         titleInput.value = widget.title;
 
-        let titleHistoryCaptured = false;
-
         titleInput.addEventListener(
-            "input",
+            "change",
             () => {
                 const nextTitle =
                     titleInput.value.trim();
 
                 if (
-                    !titleHistoryCaptured &&
-                    nextTitle !== "" &&
-                    nextTitle !== widget.title
+                    nextTitle === "" ||
+                    nextTitle === widget.title
                 ) {
-                    this.recordHistoryState();
-                    titleHistoryCaptured = true;
+                    titleInput.value =
+                        widget.title;
+                    return;
                 }
 
-                widget.setTitle(
-                    titleInput.value
-                );
-            }
-        );
-
-        titleInput.addEventListener(
-            "blur",
-            () => {
-                titleHistoryCaptured = false;
+                this.recordHistoryState();
+                widget.setTitle(nextTitle);
+                this.updateStats();
             }
         );
 
         titleRow.appendChild(titleLabel);
         titleRow.appendChild(titleInput);
 
-        const typeRow = document.createElement("div");
+        const typeRow =
+            document.createElement("div");
         typeRow.className = "property-row";
 
-        const typeLabel = document.createElement("label");
+        const typeLabel =
+            document.createElement("label");
         typeLabel.textContent = "Type";
 
-        const typeInput = document.createElement("input");
-        typeInput.type = "text";
-        typeInput.value = widget.type;
+        const typeSelect =
+            document.createElement("select");
 
-        let typeHistoryCaptured = false;
+        const knownTypes = [
+            "Start",
+            "Process",
+            "Decision",
+            "End"
+        ];
 
-        typeInput.addEventListener(
-            "input",
+        if (
+            !knownTypes.includes(
+                widget.type
+            )
+        ) {
+            knownTypes.push(widget.type);
+        }
+
+        knownTypes.forEach((type) => {
+            const option =
+                document.createElement(
+                    "option"
+                );
+            option.value = type;
+            option.textContent = type;
+            typeSelect.appendChild(option);
+        });
+
+        typeSelect.value = widget.type;
+
+        typeSelect.addEventListener(
+            "change",
             () => {
-                const nextType =
-                    typeInput.value.trim();
-
                 if (
-                    !typeHistoryCaptured &&
-                    nextType !== "" &&
-                    nextType !== widget.type
+                    typeSelect.value ===
+                    widget.type
                 ) {
-                    this.recordHistoryState();
-                    typeHistoryCaptured = true;
+                    return;
                 }
 
+                this.recordHistoryState();
                 widget.setType(
-                    typeInput.value
+                    typeSelect.value
+                );
+                this.showWidgetProperties(
+                    widget
                 );
             }
         );
 
-        typeInput.addEventListener(
-            "blur",
-            () => {
-                typeHistoryCaptured = false;
-            }
-        );
-
         typeRow.appendChild(typeLabel);
-        typeRow.appendChild(typeInput);
+        typeRow.appendChild(typeSelect);
 
-        const positionRow = document.createElement("div");
-        positionRow.className = "property-row";
+        const positionRow =
+            document.createElement("div");
+        positionRow.className = "property-row compact-property-row";
 
-        const positionLabel = document.createElement("label");
+        const positionLabel =
+            document.createElement("label");
         positionLabel.textContent = "Position";
 
-        const positionText = document.createElement("div");
+        const positionText =
+            document.createElement("div");
+        positionText.className = "property-readout";
         positionText.textContent =
-            `X: ${Math.round(widget.x)}, ` +
-            `Y: ${Math.round(widget.y)}`;
+            `X: ${Math.round(widget.x)}, Y: ${Math.round(widget.y)}`;
 
         positionRow.appendChild(positionLabel);
         positionRow.appendChild(positionText);
 
-        const actions = document.createElement("div");
-        actions.className = "property-actions";
+        general.body.appendChild(titleRow);
+        general.body.appendChild(typeRow);
+        general.body.appendChild(positionRow);
+        this.propertiesPanelContent.appendChild(
+            general.section
+        );
 
-        const deleteButton = document.createElement("button");
-        deleteButton.className = "delete-button";
-        deleteButton.textContent = "Delete";
 
-        deleteButton.addEventListener("click", () => {
-            this.removeWidget(widget);
+        /* =============================
+         * Inputs
+         * ============================= */
+        const inputsSection =
+            this.createPropertiesSection(
+                "Inputs",
+                "Choose a previous node output to connect it automatically, or use a manual value."
+            );
+
+        widget.inputs.forEach(
+            (input) => {
+                const card =
+                    document.createElement(
+                        "div"
+                    );
+                card.className =
+                    "io-property-card input-property-card";
+
+                const nameInput =
+                    document.createElement(
+                        "input"
+                    );
+                nameInput.type = "text";
+                nameInput.value = input.name;
+                nameInput.placeholder = "Input name";
+
+                nameInput.addEventListener(
+                    "change",
+                    () => {
+                        const nextName =
+                            nameInput.value.trim();
+
+                        if (
+                            nextName === "" ||
+                            nextName === input.name
+                        ) {
+                            nameInput.value =
+                                input.name;
+                            return;
+                        }
+
+                        this.recordHistoryState();
+                        input.name = nextName;
+                        widget.refreshContent();
+                        this.showWidgetProperties(
+                            widget
+                        );
+                        this.scheduleSave();
+                    }
+                );
+
+                const sourceSelect =
+                    document.createElement(
+                        "select"
+                    );
+                sourceSelect.className =
+                    "input-source-select";
+
+                const manualOption =
+                    document.createElement(
+                        "option"
+                    );
+                manualOption.value = "manual";
+                manualOption.textContent =
+                    "Manual / unconnected value";
+                sourceSelect.appendChild(
+                    manualOption
+                );
+
+                this.widgets.forEach(
+                    (sourceWidget) => {
+                        if (
+                            sourceWidget === widget
+                        ) {
+                            return;
+                        }
+
+                        sourceWidget.outputs.forEach(
+                            (output) => {
+                                const option =
+                                    document.createElement(
+                                        "option"
+                                    );
+
+                                option.value =
+                                    `${sourceWidget.id}::${output.id}`;
+
+                                option.textContent =
+                                    `${sourceWidget.title} / ${output.name}`;
+
+                                sourceSelect.appendChild(
+                                    option
+                                );
+                            }
+                        );
+                    }
+                );
+
+                const incomingConnection =
+                    this.getIncomingConnection(
+                        widget,
+                        input.id
+                    );
+
+                sourceSelect.value =
+                    this.getInputSourceSelectionValue(
+                        incomingConnection
+                    );
+
+                const inputMissingRequiredValue =
+                    input.required !== false &&
+                    !incomingConnection &&
+                    String(
+                        input.manualValue ?? ""
+                    ).trim() === "";
+
+                if (inputMissingRequiredValue) {
+                    card.classList.add(
+                        "invalid"
+                    );
+                }
+
+                sourceSelect.addEventListener(
+                    "change",
+                    () => {
+                        this.connectInputFromSource(
+                            widget,
+                            input.id,
+                            sourceSelect.value
+                        );
+                    }
+                );
+
+                const manualValue =
+                    document.createElement(
+                        "input"
+                    );
+                manualValue.type = "text";
+                manualValue.value =
+                    input.manualValue !== undefined
+                        ? input.manualValue
+                        : "";
+                manualValue.placeholder =
+                    "Manual input value";
+                manualValue.disabled =
+                    Boolean(incomingConnection);
+
+                manualValue.addEventListener(
+                    "change",
+                    () => {
+                        if (
+                            manualValue.value ===
+                            String(
+                                input.manualValue ?? ""
+                            )
+                        ) {
+                            return;
+                        }
+
+                        this.recordHistoryState();
+                        input.manualValue =
+                            manualValue.value;
+
+                        if (
+                            !this.getIncomingConnection(
+                                widget,
+                                input.id
+                            )
+                        ) {
+                            input.value =
+                                manualValue.value;
+                        }
+
+                        widget.refreshContent();
+                        this.scheduleSave();
+                    }
+                );
+
+                const cardMeta =
+                    document.createElement(
+                        "div"
+                    );
+                cardMeta.className =
+                    "io-card-meta";
+
+                const requiredLabel =
+                    document.createElement(
+                        "label"
+                    );
+                requiredLabel.className =
+                    "inline-check-label";
+
+                const requiredCheckbox =
+                    document.createElement(
+                        "input"
+                    );
+                requiredCheckbox.type =
+                    "checkbox";
+                requiredCheckbox.checked =
+                    input.required !== false;
+
+                requiredCheckbox.addEventListener(
+                    "change",
+                    () => {
+                        this.recordHistoryState();
+                        input.required =
+                            requiredCheckbox.checked;
+                        this.scheduleSave();
+                    }
+                );
+
+                requiredLabel.appendChild(
+                    requiredCheckbox
+                );
+                requiredLabel.appendChild(
+                    document.createTextNode(
+                        " Required"
+                    )
+                );
+
+                const currentValue =
+                    document.createElement(
+                        "span"
+                    );
+                currentValue.className =
+                    "io-current-value";
+                currentValue.textContent =
+                    `Current: ${Widget.formatValue(input.value)}`;
+
+                cardMeta.appendChild(
+                    requiredLabel
+                );
+                cardMeta.appendChild(
+                    currentValue
+                );
+
+                const removeButton =
+                    document.createElement(
+                        "button"
+                    );
+                removeButton.type = "button";
+                removeButton.className =
+                    "io-remove-button";
+                removeButton.textContent =
+                    "Remove";
+
+                removeButton.addEventListener(
+                    "click",
+                    () => {
+                        this.removeWidgetInput(
+                            widget,
+                            input.id
+                        );
+                    }
+                );
+
+                card.appendChild(nameInput);
+                card.appendChild(sourceSelect);
+                card.appendChild(manualValue);
+                card.appendChild(cardMeta);
+
+                if (inputMissingRequiredValue) {
+                    const issue =
+                        document.createElement(
+                            "div"
+                        );
+                    issue.className =
+                        "io-validation-message";
+                    issue.textContent =
+                        "Required input needs a source or manual value.";
+                    card.appendChild(issue);
+                }
+
+                card.appendChild(removeButton);
+                inputsSection.body.appendChild(
+                    card
+                );
+            }
+        );
+
+        const addInputButton =
+            document.createElement("button");
+        addInputButton.type = "button";
+        addInputButton.className =
+            "io-add-button";
+        addInputButton.textContent =
+            "+ Add Input";
+        addInputButton.addEventListener(
+            "click",
+            () => {
+                this.addWidgetInput(widget);
+            }
+        );
+
+        inputsSection.body.appendChild(
+            addInputButton
+        );
+        this.propertiesPanelContent.appendChild(
+            inputsSection.section
+        );
+
+
+        /* =============================
+         * Outputs
+         * ============================= */
+        const outputsSection =
+            this.createPropertiesSection(
+                "Outputs",
+                "Outputs can feed any number of downstream inputs. Start-node values can be entered here directly."
+            );
+
+        widget.outputs.forEach(
+            (output) => {
+                const card =
+                    document.createElement(
+                        "div"
+                    );
+                card.className =
+                    "io-property-card output-property-card";
+
+                const nameInput =
+                    document.createElement(
+                        "input"
+                    );
+                nameInput.type = "text";
+                nameInput.value = output.name;
+                nameInput.placeholder = "Output name";
+
+                nameInput.addEventListener(
+                    "change",
+                    () => {
+                        const nextName =
+                            nameInput.value.trim();
+
+                        if (
+                            nextName === "" ||
+                            nextName === output.name
+                        ) {
+                            nameInput.value =
+                                output.name;
+                            return;
+                        }
+
+                        this.recordHistoryState();
+                        output.name = nextName;
+                        widget.refreshContent();
+                        this.showWidgetProperties(
+                            widget
+                        );
+                        this.scheduleSave();
+                    }
+                );
+
+                const valueInput =
+                    document.createElement(
+                        "input"
+                    );
+                valueInput.type = "text";
+                valueInput.value =
+                    output.value !== undefined
+                        ? output.value
+                        : "";
+                valueInput.placeholder =
+                    widget.type === "Start"
+                        ? "Starting output value"
+                        : "Initial / current value";
+
+                valueInput.addEventListener(
+                    "change",
+                    () => {
+                        if (
+                            valueInput.value ===
+                            String(output.value ?? "")
+                        ) {
+                            return;
+                        }
+
+                        this.recordHistoryState();
+                        output.value =
+                            valueInput.value;
+                        widget.refreshContent();
+                        this.propagateOutputValue(
+                            widget,
+                            output.id
+                        );
+                        this.scheduleSave();
+                    }
+                );
+
+                const outputMeta =
+                    document.createElement(
+                        "div"
+                    );
+                outputMeta.className =
+                    "io-card-meta";
+
+                const connectionCount =
+                    this.getOutgoingConnections(
+                        widget,
+                        output.id
+                    ).length;
+
+                outputMeta.textContent =
+                    `${connectionCount} downstream connection${connectionCount === 1 ? "" : "s"}`;
+
+                const removeButton =
+                    document.createElement(
+                        "button"
+                    );
+                removeButton.type = "button";
+                removeButton.className =
+                    "io-remove-button";
+                removeButton.textContent =
+                    "Remove";
+
+                removeButton.addEventListener(
+                    "click",
+                    () => {
+                        this.removeWidgetOutput(
+                            widget,
+                            output.id
+                        );
+                    }
+                );
+
+                card.appendChild(nameInput);
+                card.appendChild(valueInput);
+                card.appendChild(outputMeta);
+                card.appendChild(removeButton);
+                outputsSection.body.appendChild(
+                    card
+                );
+            }
+        );
+
+        const addOutputButton =
+            document.createElement("button");
+        addOutputButton.type = "button";
+        addOutputButton.className =
+            "io-add-button";
+        addOutputButton.textContent =
+            "+ Add Output";
+        addOutputButton.addEventListener(
+            "click",
+            () => {
+                this.addWidgetOutput(widget);
+            }
+        );
+
+        outputsSection.body.appendChild(
+            addOutputButton
+        );
+        this.propertiesPanelContent.appendChild(
+            outputsSection.section
+        );
+
+
+        /* =============================
+         * Script / transformation
+         * ============================= */
+        const scriptSection =
+            this.createPropertiesSection(
+                "Script",
+                "Runs in the browser-safe workflow simulator. Bash, Python, and JavaScript syntax is interpreted locally; no operating-system commands are executed."
+            );
+
+        const languageRow =
+            document.createElement("div");
+        languageRow.className = "property-row";
+
+        const languageLabel =
+            document.createElement("label");
+        languageLabel.textContent = "Language";
+
+        const languageSelect =
+            document.createElement("select");
+
+        [
+            "Pass-through",
+            "Expression",
+            "Bash",
+            "Python",
+            "JavaScript"
+        ].forEach((language) => {
+            const option =
+                document.createElement(
+                    "option"
+                );
+            option.value = language;
+            option.textContent = language;
+            languageSelect.appendChild(option);
         });
 
-        actions.appendChild(deleteButton);
+        languageSelect.value =
+            widget.language ||
+            "Pass-through";
 
-        this.propertiesPanelContent.appendChild(titleRow);
-        this.propertiesPanelContent.appendChild(typeRow);
-        this.propertiesPanelContent.appendChild(positionRow);
-        this.propertiesPanelContent.appendChild(actions);
+        languageSelect.addEventListener(
+            "change",
+            () => {
+                if (
+                    languageSelect.value ===
+                    widget.language
+                ) {
+                    return;
+                }
+
+                this.recordHistoryState();
+                widget.language =
+                    languageSelect.value;
+                this.showWidgetProperties(
+                    widget
+                );
+                this.scheduleSave();
+            }
+        );
+
+        languageRow.appendChild(
+            languageLabel
+        );
+        languageRow.appendChild(
+            languageSelect
+        );
+
+        const sourceRow =
+            document.createElement("div");
+        sourceRow.className = "property-row";
+
+        const sourceLabel =
+            document.createElement("label");
+        sourceLabel.textContent = "Source";
+
+        const sourceInput =
+            document.createElement("textarea");
+        sourceInput.className =
+            "script-source-input";
+        sourceInput.value =
+            widget.source || "";
+        sourceInput.disabled =
+            widget.language ===
+            "Pass-through";
+
+        const placeholders = {
+            "Pass-through":
+                "The first input is copied to the first output.",
+            "Expression":
+                "A + B",
+            "Bash":
+                "sleep 1\necho $value",
+            "Python":
+                "time.sleep(1)\nprint(value)",
+            "JavaScript":
+                "return value + 1"
+        };
+
+        sourceInput.placeholder =
+            placeholders[widget.language] ||
+            "Enter source";
+
+        sourceInput.addEventListener(
+            "change",
+            () => {
+                if (
+                    sourceInput.value ===
+                    widget.source
+                ) {
+                    return;
+                }
+
+                this.recordHistoryState();
+                widget.source =
+                    sourceInput.value;
+                this.scheduleSave();
+            }
+        );
+
+        sourceRow.appendChild(sourceLabel);
+        sourceRow.appendChild(sourceInput);
+
+        const delayRow =
+            document.createElement("div");
+        delayRow.className = "property-row";
+
+        const delayLabel =
+            document.createElement("label");
+        delayLabel.textContent =
+            "Base execution delay (ms)";
+
+        const delayInput =
+            document.createElement("input");
+        delayInput.type = "number";
+        delayInput.min = "0";
+        delayInput.max = "5000";
+        delayInput.step = "50";
+        delayInput.value =
+            String(
+                widget.executionDelayMs || 0
+            );
+
+        delayInput.addEventListener(
+            "change",
+            () => {
+                const nextValue =
+                    Math.max(
+                        0,
+                        Math.min(
+                            5000,
+                            Number(
+                                delayInput.value
+                            ) || 0
+                        )
+                    );
+
+                if (
+                    nextValue ===
+                    widget.executionDelayMs
+                ) {
+                    return;
+                }
+
+                this.recordHistoryState();
+                widget.executionDelayMs =
+                    nextValue;
+                delayInput.value =
+                    String(nextValue);
+                this.scheduleSave();
+            }
+        );
+
+        delayRow.appendChild(delayLabel);
+        delayRow.appendChild(delayInput);
+
+        scriptSection.body.appendChild(
+            languageRow
+        );
+        scriptSection.body.appendChild(
+            sourceRow
+        );
+        scriptSection.body.appendChild(
+            delayRow
+        );
+        this.propertiesPanelContent.appendChild(
+            scriptSection.section
+        );
+
+
+        /* =============================
+         * Status + performance
+         * ============================= */
+        const statusSection =
+            this.createPropertiesSection(
+                "Status & Performance"
+            );
+
+        const showStatusLabel =
+            document.createElement("label");
+        showStatusLabel.className =
+            "status-checkbox-label";
+
+        const showStatusCheckbox =
+            document.createElement("input");
+        showStatusCheckbox.type = "checkbox";
+        showStatusCheckbox.checked =
+            widget.showStatus;
+
+        showStatusCheckbox.addEventListener(
+            "change",
+            () => {
+                this.recordHistoryState();
+                widget.showStatus =
+                    showStatusCheckbox.checked;
+                widget.updateStatusDisplay();
+                this.scheduleSave();
+            }
+        );
+
+        showStatusLabel.appendChild(
+            showStatusCheckbox
+        );
+        showStatusLabel.appendChild(
+            document.createTextNode(
+                " Show status label on widget"
+            )
+        );
+
+        const metricsGrid =
+            document.createElement("div");
+        metricsGrid.className =
+            "property-metrics-grid";
+
+        const metricValues = [
+            ["Status", widget.status],
+            ["Runtime", `${Math.round(widget.runtimeMs)} ms`],
+            ["Memory", `${widget.memoryKb.toFixed(1)} KB`],
+            ["Inputs", String(widget.inputs.length)],
+            ["Outputs", String(widget.outputs.length)]
+        ];
+
+        metricValues.forEach(
+            ([label, value]) => {
+                const metric =
+                    document.createElement(
+                        "div"
+                    );
+                metric.className =
+                    "property-metric";
+
+                const metricLabel =
+                    document.createElement(
+                        "span"
+                    );
+                metricLabel.className =
+                    "property-metric-label";
+                metricLabel.textContent = label;
+
+                const metricValue =
+                    document.createElement(
+                        "strong"
+                    );
+                metricValue.textContent = value;
+
+                metric.appendChild(
+                    metricLabel
+                );
+                metric.appendChild(
+                    metricValue
+                );
+                metricsGrid.appendChild(metric);
+            }
+        );
+
+        if (widget.lastError) {
+            const error =
+                document.createElement("div");
+            error.className =
+                "property-error-message";
+            error.textContent =
+                widget.lastError;
+            statusSection.body.appendChild(
+                error
+            );
+        }
+
+        statusSection.body.appendChild(
+            showStatusLabel
+        );
+        statusSection.body.appendChild(
+            metricsGrid
+        );
+        this.propertiesPanelContent.appendChild(
+            statusSection.section
+        );
+
+
+        /* =============================
+         * Actions
+         * ============================= */
+        const actions =
+            document.createElement("div");
+        actions.className =
+            "property-actions stacked-property-actions";
+
+        const validateButton =
+            document.createElement("button");
+        validateButton.type = "button";
+        validateButton.textContent =
+            "Validate Workflow";
+        validateButton.addEventListener(
+            "click",
+            () => {
+                this.validateWorkflow(true);
+            }
+        );
+
+        const runButton =
+            document.createElement("button");
+        runButton.type = "button";
+        runButton.className =
+            "primary-property-button";
+        runButton.textContent =
+            "▶ Run Workflow";
+        runButton.addEventListener(
+            "click",
+            () => {
+                this.runWorkflow();
+            }
+        );
+
+        const deleteButton =
+            document.createElement("button");
+        deleteButton.type = "button";
+        deleteButton.className =
+            "delete-button";
+        deleteButton.textContent = "Delete";
+        deleteButton.addEventListener(
+            "click",
+            () => {
+                this.removeWidget(widget);
+            }
+        );
+
+        actions.appendChild(validateButton);
+        actions.appendChild(runButton);
+        actions.appendChild(deleteButton);
+        this.propertiesPanelContent.appendChild(
+            actions
+        );
     }
 
     showConnectionProperties(
@@ -2141,88 +3405,118 @@ class Board {
             return;
         }
 
+        this.propertiesPanelContent.innerHTML = "";
 
-        this.propertiesPanelContent.innerHTML =
-            "";
+        const section =
+            this.createPropertiesSection(
+                "Connection",
+                "This edge transfers the source output value into the target input when the workflow runs."
+            );
 
+        const sourcePort =
+            connection.sourceWidget
+                .getOutputById(
+                    connection.sourcePortId
+                );
 
-        const description =
-            document.createElement("p");
+        const targetPort =
+            connection.targetWidget
+                .getInputById(
+                    connection.targetPortId
+                );
 
-        description.className =
-            "panel-description";
+        const details = [
+            [
+                "From",
+                `${connection.sourceWidget.title} / ${sourcePort ? sourcePort.name : "output"}`
+            ],
+            [
+                "To",
+                `${connection.targetWidget.title} / ${targetPort ? targetPort.name : "input"}`
+            ],
+            [
+                "Current value",
+                Widget.formatValue(
+                    sourcePort
+                        ? sourcePort.value
+                        : ""
+                )
+            ]
+        ];
 
-        description.textContent =
-            "Workflow Connection";
+        details.forEach(
+            ([label, value]) => {
+                const row =
+                    document.createElement(
+                        "div"
+                    );
+                row.className =
+                    "property-row";
 
+                const rowLabel =
+                    document.createElement(
+                        "label"
+                    );
+                rowLabel.textContent = label;
 
-        const fromRow =
-            document.createElement("div");
+                const rowValue =
+                    document.createElement(
+                        "div"
+                    );
+                rowValue.className =
+                    "property-readout";
+                rowValue.textContent = value;
 
-        fromRow.className =
-            "property-row";
+                row.appendChild(rowLabel);
+                row.appendChild(rowValue);
+                section.body.appendChild(row);
+            }
+        );
 
-
-        const fromLabel =
-            document.createElement("label");
-
-        fromLabel.textContent =
-            "From";
-
-
-        const fromValue =
-            document.createElement("div");
-
-        fromValue.textContent =
-            connection.sourceWidget.title;
-
-
-        fromRow.appendChild(fromLabel);
-        fromRow.appendChild(fromValue);
-
-
-        const toRow =
-            document.createElement("div");
-
-        toRow.className =
-            "property-row";
-
-
-        const toLabel =
-            document.createElement("label");
-
-        toLabel.textContent =
-            "To";
-
-
-        const toValue =
-            document.createElement("div");
-
-        toValue.textContent =
-            connection.targetWidget.title;
-
-
-        toRow.appendChild(toLabel);
-        toRow.appendChild(toValue);
-
+        this.propertiesPanelContent.appendChild(
+            section.section
+        );
 
         const actions =
             document.createElement("div");
-
         actions.className =
-            "property-actions";
+            "property-actions stacked-property-actions";
 
+        const sourceButton =
+            document.createElement("button");
+        sourceButton.type = "button";
+        sourceButton.textContent =
+            "Select Source Widget";
+        sourceButton.addEventListener(
+            "click",
+            () => {
+                this.selectWidget(
+                    connection.sourceWidget
+                );
+            }
+        );
+
+        const targetButton =
+            document.createElement("button");
+        targetButton.type = "button";
+        targetButton.textContent =
+            "Select Target Widget";
+        targetButton.addEventListener(
+            "click",
+            () => {
+                this.selectWidget(
+                    connection.targetWidget
+                );
+            }
+        );
 
         const deleteButton =
             document.createElement("button");
-
+        deleteButton.type = "button";
         deleteButton.className =
             "delete-button";
-
         deleteButton.textContent =
             "Delete Connection";
-
-
         deleteButton.addEventListener(
             "click",
             () => {
@@ -2232,24 +3526,9 @@ class Board {
             }
         );
 
-
-        actions.appendChild(
-            deleteButton
-        );
-
-
-        this.propertiesPanelContent.appendChild(
-            description
-        );
-
-        this.propertiesPanelContent.appendChild(
-            fromRow
-        );
-
-        this.propertiesPanelContent.appendChild(
-            toRow
-        );
-
+        actions.appendChild(sourceButton);
+        actions.appendChild(targetButton);
+        actions.appendChild(deleteButton);
         this.propertiesPanelContent.appendChild(
             actions
         );
@@ -2419,11 +3698,15 @@ class Board {
         this.scheduleSave();
     }
 
-    createNewWorkflow() {
-        const confirmed = window.confirm(
-            "Create a new workflow? " +
-            "The current workflow will be cleared."
-        );
+    async createNewWorkflow() {
+        const confirmed =
+            await this.showConfirmDialog({
+                title: "Create New Workflow",
+                message:
+                    "Create a new workflow? The current workflow will be cleared.",
+                confirmLabel: "Create New",
+                danger: true
+            });
 
         if (!confirmed) {
             return;
@@ -2451,6 +3734,9 @@ class Board {
     }
 
     clearWorkflow() {
+        this.executionRunId += 1;
+        this.isWorkflowRunning = false;
+
         this.clearAllWidgetPeek();
 
         this.hoverPeekConnections = [];
@@ -2475,6 +3761,7 @@ class Board {
         this.nextWidgetZIndex = 3;
 
         this.connectionSourceWidget = null;
+        this.connectionSourcePortId = null;
         this.connectionPreviewElement = null;
 
         this.connectionMoveHandler = null;
@@ -2491,29 +3778,64 @@ class Board {
             return;
         }
 
-        const widgetCount = this.widgets.length;
+        const widgetCount =
+            this.widgets.length;
 
-        /*
-         * These are mock values for the assignment.
-         */
-        const mockRuntime = widgetCount * 12;
-        const mockSpace = widgetCount * 4;
+        const totalRuntime =
+            this.widgets.reduce(
+                (total, widget) =>
+                    total +
+                    (
+                        Number(widget.runtimeMs) ||
+                        0
+                    ),
+                0
+            );
+
+        const totalMemory =
+            this.widgets.reduce(
+                (total, widget) =>
+                    total +
+                    (
+                        Number(widget.memoryKb) ||
+                        0
+                    ),
+                0
+            );
 
         this.widgetCountElement.textContent =
             `Widgets: ${widgetCount}`;
 
         this.runtimeElement.textContent =
-            `Runtime: ${mockRuntime} ms`;
+            `Runtime: ${Math.round(totalRuntime)} ms`;
 
         this.spaceElement.textContent =
-            `Space used: ${mockSpace} KB`;
+            `Memory: ${totalMemory.toFixed(1)} KB`;
 
-        if (this.selectedWidget) {
+        if (this.isWorkflowRunning) {
+            this.positionElement.textContent =
+                "Workflow: running";
+        } else if (this.selectedWidget) {
             this.positionElement.textContent =
                 `Selected: ${this.selectedWidget.title}`;
         } else if (this.selectedConnection) {
+            const sourcePort =
+                this.selectedConnection.sourceWidget
+                    .getOutputById(
+                        this.selectedConnection.sourcePortId
+                    );
+
+            const targetPort =
+                this.selectedConnection.targetWidget
+                    .getInputById(
+                        this.selectedConnection.targetPortId
+                    );
+
             this.positionElement.textContent =
-                `Selected: ${this.selectedConnection.sourceWidget.title} → ${this.selectedConnection.targetWidget.title}`;
+                `Selected: ${this.selectedConnection.sourceWidget.title}` +
+                ` / ${sourcePort ? sourcePort.name : "output"}` +
+                ` → ${this.selectedConnection.targetWidget.title}` +
+                ` / ${targetPort ? targetPort.name : "input"}`;
         } else {
             this.positionElement.textContent =
                 `Zoom: ${Math.round(this.zoom * 100)}%`;
@@ -3412,7 +4734,7 @@ class Board {
 
         reader.addEventListener(
             "load",
-            () => {
+            async () => {
                 try {
                     const workflowData =
                         JSON.parse(
@@ -3438,9 +4760,13 @@ class Board {
                         this.widgets.length > 0
                     ) {
                         const confirmed =
-                            window.confirm(
-                                "Importing this workflow will replace your current workflow. Continue?"
-                            );
+                            await this.showConfirmDialog({
+                                title: "Replace Current Workflow?",
+                                message:
+                                    "Importing this workflow will replace your current workflow.",
+                                confirmLabel: "Import & Replace",
+                                danger: true
+                            });
 
                         if (!confirmed) {
                             return;
@@ -3455,9 +4781,12 @@ class Board {
                 } catch (error) {
                     console.error(error);
 
-                    window.alert(
-                        "This is not a valid workflow JSON file."
-                    );
+                    await this.showMessageDialog({
+                        title: "Import Failed",
+                        message:
+                            "This is not a valid workflow JSON file.",
+                        tone: "error"
+                    });
                 }
             }
         );
@@ -3498,6 +4827,10 @@ class Board {
                     widget.zIndex =
                         widgetData.zIndex;
                 }
+
+                widget.applyJSON(
+                    widgetData
+                );
 
                 this.addWidget(widget);
             }
@@ -3543,7 +4876,9 @@ class Board {
                     ) {
                         this.addConnection(
                             sourceWidget,
-                            targetWidget
+                            targetWidget,
+                            connectionData.sourcePortId || null,
+                            connectionData.targetPortId || null
                         );
                     }
                 }
@@ -3618,6 +4953,1274 @@ class Board {
         this.updateWorkflowMap();
 
         this.scheduleSave();
+    }
+
+    showShortcutHelp() {
+        return this.showMessageDialog({
+            title: "Keyboard Shortcuts",
+            message:
+                "Ctrl+Z — Undo\n" +
+                "Ctrl+Y / Ctrl+Shift+Z — Redo\n" +
+                "Ctrl+D — Duplicate selected widget\n" +
+                "Ctrl+S — Export workflow JSON\n" +
+                "Ctrl+Enter — Validate and run workflow\n" +
+                "Delete — Delete selected widget/connection\n" +
+                "Escape — Deselect / close peek state\n" +
+                "Middle mouse drag — Pan canvas",
+            tone: "info",
+            confirmLabel: "Got it"
+        });
+    }
+
+    updateRunControls() {
+        if (this.runWorkflowMenuItem) {
+            this.runWorkflowMenuItem.disabled =
+                this.isWorkflowRunning;
+        }
+
+        if (this.stopWorkflowMenuItem) {
+            this.stopWorkflowMenuItem.disabled =
+                !this.isWorkflowRunning;
+        }
+    }
+
+    getTopologicalOrder() {
+        const indegree = new Map();
+        const outgoing = new Map();
+
+        this.widgets.forEach((widget) => {
+            indegree.set(widget, 0);
+            outgoing.set(widget, []);
+        });
+
+        this.connections.forEach(
+            (connection) => {
+                if (
+                    !indegree.has(
+                        connection.sourceWidget
+                    ) ||
+                    !indegree.has(
+                        connection.targetWidget
+                    )
+                ) {
+                    return;
+                }
+
+                outgoing
+                    .get(connection.sourceWidget)
+                    .push(
+                        connection.targetWidget
+                    );
+
+                indegree.set(
+                    connection.targetWidget,
+                    indegree.get(
+                        connection.targetWidget
+                    ) + 1
+                );
+            }
+        );
+
+        const queue =
+            this.widgets.filter(
+                (widget) =>
+                    indegree.get(widget) === 0
+            );
+
+        const order = [];
+
+        while (queue.length > 0) {
+            const widget = queue.shift();
+            order.push(widget);
+
+            outgoing
+                .get(widget)
+                .forEach(
+                    (targetWidget) => {
+                        const nextIndegree =
+                            indegree.get(
+                                targetWidget
+                            ) - 1;
+
+                        indegree.set(
+                            targetWidget,
+                            nextIndegree
+                        );
+
+                        if (nextIndegree === 0) {
+                            queue.push(
+                                targetWidget
+                            );
+                        }
+                    }
+                );
+        }
+
+        return {
+            order,
+            hasCycle:
+                order.length !==
+                this.widgets.length
+        };
+    }
+
+    getWorkflowValidationReport() {
+        const errors = [];
+        const warnings = [];
+
+        if (this.widgets.length === 0) {
+            errors.push(
+                "The workflow has no widgets."
+            );
+
+            return {
+                valid: false,
+                errors,
+                warnings
+            };
+        }
+
+        const startWidgets =
+            this.widgets.filter(
+                (widget) =>
+                    widget.type === "Start"
+            );
+
+        const endWidgets =
+            this.widgets.filter(
+                (widget) =>
+                    widget.type === "End"
+            );
+
+        if (startWidgets.length === 0) {
+            warnings.push(
+                "No Start widget is defined. Nodes with no dependencies will run first."
+            );
+        }
+
+        if (endWidgets.length === 0) {
+            warnings.push(
+                "No End widget is defined."
+            );
+        }
+
+        const targetPortCounts = new Map();
+
+        this.connections.forEach(
+            (connection) => {
+                const sourcePort =
+                    connection.sourceWidget
+                        .getOutputById(
+                            connection.sourcePortId
+                        );
+
+                const targetPort =
+                    connection.targetWidget
+                        .getInputById(
+                            connection.targetPortId
+                        );
+
+                if (!sourcePort) {
+                    errors.push(
+                        `Connection ${connection.id} references a missing output on "${connection.sourceWidget.title}".`
+                    );
+                }
+
+                if (!targetPort) {
+                    errors.push(
+                        `Connection ${connection.id} references a missing input on "${connection.targetWidget.title}".`
+                    );
+                }
+
+                const targetKey =
+                    `${connection.targetWidget.id}::${connection.targetPortId}`;
+
+                targetPortCounts.set(
+                    targetKey,
+                    (
+                        targetPortCounts.get(
+                            targetKey
+                        ) || 0
+                    ) + 1
+                );
+            }
+        );
+
+        targetPortCounts.forEach(
+            (count, key) => {
+                if (count > 1) {
+                    errors.push(
+                        `Input ${key} has more than one incoming connection.`
+                    );
+                }
+            }
+        );
+
+        this.widgets.forEach(
+            (widget) => {
+                widget.inputs.forEach(
+                    (input) => {
+                        const incoming =
+                            this.getIncomingConnection(
+                                widget,
+                                input.id
+                            );
+
+                        const manualValue =
+                            String(
+                                input.manualValue ?? ""
+                            ).trim();
+
+                        if (
+                            input.required !== false &&
+                            !incoming &&
+                            manualValue === ""
+                        ) {
+                            errors.push(
+                                `"${widget.title}" requires input "${input.name}", but it has no source or manual value.`
+                            );
+                        }
+                    }
+                );
+
+                widget.outputs.forEach(
+                    (output) => {
+                        const outgoingCount =
+                            this.getOutgoingConnections(
+                                widget,
+                                output.id
+                            ).length;
+
+                        if (
+                            outgoingCount === 0 &&
+                            widget.type !== "End"
+                        ) {
+                            warnings.push(
+                                `"${widget.title}" output "${output.name}" is not connected.`
+                            );
+                        }
+                    }
+                );
+
+                const attachedCount =
+                    this.connections.filter(
+                        (connection) =>
+                            connection.sourceWidget ===
+                                widget ||
+                            connection.targetWidget ===
+                                widget
+                    ).length;
+
+                if (
+                    this.widgets.length > 1 &&
+                    attachedCount === 0
+                ) {
+                    warnings.push(
+                        `"${widget.title}" is completely disconnected.`
+                    );
+                }
+
+                if (
+                    widget.type === "Start" &&
+                    widget.inputs.length > 0
+                ) {
+                    warnings.push(
+                        `Start widget "${widget.title}" has input ports. This is allowed, but unusual.`
+                    );
+                }
+
+                if (
+                    widget.type === "End" &&
+                    widget.outputs.length > 0
+                ) {
+                    warnings.push(
+                        `End widget "${widget.title}" has output ports. This is allowed, but unusual.`
+                    );
+                }
+
+                if (
+                    widget.language === "Expression" &&
+                    widget.type !== "Start" &&
+                    widget.type !== "End" &&
+                    String(widget.source || "").trim() === ""
+                ) {
+                    warnings.push(
+                        `"${widget.title}" uses Expression mode but has no source expression; it will pass through its first input.`
+                    );
+                }
+            }
+        );
+
+        const topology =
+            this.getTopologicalOrder();
+
+        if (topology.hasCycle) {
+            errors.push(
+                "The workflow contains a cycle. The current execution engine requires an acyclic graph."
+            );
+        }
+
+        return {
+            valid:
+                errors.length === 0,
+            errors,
+            warnings
+        };
+    }
+
+    formatValidationReport(report) {
+        const lines = [];
+
+        lines.push(
+            report.valid
+                ? "Workflow validation passed."
+                : "Workflow validation failed."
+        );
+
+        if (report.errors.length > 0) {
+            lines.push("", "Errors:");
+
+            report.errors.forEach(
+                (error, index) => {
+                    lines.push(
+                        `${index + 1}. ${error}`
+                    );
+                }
+            );
+        }
+
+        if (report.warnings.length > 0) {
+            lines.push("", "Warnings:");
+
+            report.warnings.forEach(
+                (warning, index) => {
+                    lines.push(
+                        `${index + 1}. ${warning}`
+                    );
+                }
+            );
+        }
+
+        if (
+            report.errors.length === 0 &&
+            report.warnings.length === 0
+        ) {
+            lines.push(
+                "No issues were found."
+            );
+        }
+
+        return lines.join("\n");
+    }
+
+    validateWorkflow(showAlert = false) {
+        const report =
+            this.getWorkflowValidationReport();
+
+        this.lastValidationReport = report;
+
+        if (showAlert) {
+            void this.showMessageDialog({
+                title:
+                    report.valid
+                        ? "Workflow Validation"
+                        : "Workflow Needs Attention",
+                message:
+                    this.formatValidationReport(
+                        report
+                    ),
+                tone:
+                    report.valid
+                        ? "success"
+                        : "warning",
+                confirmLabel: "Close"
+            });
+        }
+
+        return report;
+    }
+
+    resetWorkflowStatuses() {
+        if (this.isWorkflowRunning) {
+            this.stopWorkflowRun();
+        }
+
+        this.widgets.forEach(
+            (widget) => {
+                widget.setStatus(
+                    widget.type === "Start"
+                        ? "idle"
+                        : "waiting",
+                    0,
+                    0,
+                    ""
+                );
+            }
+        );
+
+        this.lastRunRuntimeMs = 0;
+        this.lastRunMemoryKb = 0;
+        this.updateStats();
+
+        if (this.selectedWidget) {
+            this.showWidgetProperties(
+                this.selectedWidget
+            );
+        }
+
+        this.scheduleSave();
+    }
+
+    stopWorkflowRun() {
+        if (!this.isWorkflowRunning) {
+            return;
+        }
+
+        this.executionRunId += 1;
+        this.isWorkflowRunning = false;
+
+        this.widgets.forEach(
+            (widget) => {
+                if (
+                    widget.status ===
+                    "running"
+                ) {
+                    widget.setStatus(
+                        "stopped",
+                        widget.runtimeMs,
+                        widget.memoryKb
+                    );
+                }
+            }
+        );
+
+        this.updateRunControls();
+        this.updateStats();
+        this.scheduleSave();
+    }
+
+    async waitForExecution(
+        milliseconds,
+        runId
+    ) {
+        const duration =
+            Math.max(
+                0,
+                Math.min(
+                    5000,
+                    milliseconds
+                )
+            );
+
+        if (duration === 0) {
+            return;
+        }
+
+        await new Promise(
+            (resolve) => {
+                setTimeout(
+                    resolve,
+                    duration
+                );
+            }
+        );
+
+        if (
+            runId !==
+            this.executionRunId
+        ) {
+            throw new Error(
+                "Workflow run stopped."
+            );
+        }
+    }
+
+    getScriptDelay(widget) {
+        const source =
+            String(widget.source || "");
+
+        let scriptDelay = 0;
+
+        if (widget.language === "Bash") {
+            const match =
+                source.match(
+                    /^\s*sleep\s+([0-9.]+)/m
+                );
+
+            if (match) {
+                scriptDelay =
+                    Number(match[1]) *
+                    1000;
+            }
+        }
+
+        if (widget.language === "Python") {
+            const match =
+                source.match(
+                    /(?:time\.)?sleep\s*\(\s*([0-9.]+)\s*\)/
+                );
+
+            if (match) {
+                scriptDelay =
+                    Number(match[1]) *
+                    1000;
+            }
+        }
+
+        if (widget.language === "JavaScript") {
+            const match =
+                source.match(
+                    /(?:await\s+)?sleep\s*\(\s*([0-9.]+)\s*\)/
+                );
+
+            if (match) {
+                scriptDelay =
+                    Number(match[1]);
+            }
+        }
+
+        return Math.min(
+            3000,
+            Math.max(
+                0,
+                scriptDelay
+            )
+        );
+    }
+
+    coerceWorkflowValue(value) {
+        if (
+            typeof value !== "string"
+        ) {
+            return value;
+        }
+
+        const trimmed = value.trim();
+
+        if (trimmed === "") {
+            return "";
+        }
+
+        if (
+            /^-?(?:\d+\.?\d*|\.\d+)$/.test(
+                trimmed
+            )
+        ) {
+            return Number(trimmed);
+        }
+
+        if (trimmed === "true") {
+            return true;
+        }
+
+        if (trimmed === "false") {
+            return false;
+        }
+
+        if (trimmed === "null") {
+            return null;
+        }
+
+        if (
+            (
+                trimmed.startsWith("{") &&
+                trimmed.endsWith("}")
+            ) ||
+            (
+                trimmed.startsWith("[") &&
+                trimmed.endsWith("]")
+            )
+        ) {
+            try {
+                return JSON.parse(trimmed);
+            } catch (error) {
+                return value;
+            }
+        }
+
+        return value;
+    }
+
+    sanitizeInputName(name, index = 0) {
+        let identifier =
+            String(name || "")
+                .trim()
+                .replace(
+                    /[^A-Za-z0-9_]/g,
+                    "_"
+                );
+
+        if (identifier === "") {
+            identifier =
+                `input${index + 1}`;
+        }
+
+        if (/^[0-9]/.test(identifier)) {
+            identifier =
+                `_${identifier}`;
+        }
+
+        return identifier;
+    }
+
+    buildInputContext(widget) {
+        const context = {};
+
+        widget.inputs.forEach(
+            (input, index) => {
+                const name =
+                    this.sanitizeInputName(
+                        input.name,
+                        index
+                    );
+
+                context[name] =
+                    this.coerceWorkflowValue(
+                        input.value
+                    );
+
+                context[`input${index + 1}`] =
+                    context[name];
+            }
+        );
+
+        return context;
+    }
+
+    safeEvaluateExpression(
+        expression,
+        context
+    ) {
+        let source =
+            String(expression || "")
+                .trim()
+                .replace(/;\s*$/, "");
+
+        if (source === "") {
+            return "";
+        }
+
+        source = source.replace(
+            /\binputs\.([A-Za-z_][A-Za-z0-9_]*)/g,
+            "$1"
+        );
+
+        const literalMatch =
+            source.match(
+                /^(["'])([\s\S]*)\1$/
+            );
+
+        if (literalMatch) {
+            return literalMatch[2]
+                .replace(/\\n/g, "\n")
+                .replace(/\\t/g, "\t");
+        }
+
+        if (
+            /[`{};\\]/.test(source)
+        ) {
+            throw new Error(
+                "Expression contains unsupported syntax."
+            );
+        }
+
+        if (
+            !/^[\sA-Za-z0-9_+\-*/%()[\].,<>=!&|?:'" ]+$/.test(
+                source
+            )
+        ) {
+            throw new Error(
+                "Expression contains unsupported characters."
+            );
+        }
+
+        const sourceWithoutStrings =
+            source.replace(
+                /(["'])(?:\\.|(?!\1).)*\1/g,
+                '""'
+            );
+
+        const identifiers =
+            sourceWithoutStrings.match(
+                /\b[A-Za-z_][A-Za-z0-9_]*\b/g
+            ) || [];
+
+        const allowedNames =
+            new Set([
+                ...Object.keys(context),
+                "true",
+                "false",
+                "null",
+                "undefined",
+                "NaN",
+                "Infinity"
+            ]);
+
+        const unknownName =
+            identifiers.find(
+                (identifier) =>
+                    !allowedNames.has(
+                        identifier
+                    )
+            );
+
+        if (unknownName) {
+            throw new Error(
+                `Unknown input "${unknownName}" in expression.`
+            );
+        }
+
+        const names =
+            Object.keys(context);
+
+        const values =
+            names.map(
+                (name) =>
+                    context[name]
+            );
+
+        const evaluator =
+            Function(
+                ...names,
+                `"use strict"; return (${source});`
+            );
+
+        return evaluator(...values);
+    }
+
+    expandScriptVariables(
+        text,
+        context
+    ) {
+        return String(text).replace(
+            /\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g,
+            (match, name) => {
+                if (
+                    Object.prototype.hasOwnProperty.call(
+                        context,
+                        name
+                    )
+                ) {
+                    return String(context[name]);
+                }
+
+                return match;
+            }
+        );
+    }
+
+    interpretWidgetSource(
+        widget,
+        context
+    ) {
+        const source =
+            String(widget.source || "")
+                .trim();
+
+        if (
+            widget.language ===
+            "Pass-through" ||
+            source === ""
+        ) {
+            const firstInput =
+                widget.inputs[0];
+
+            return firstInput
+                ? firstInput.value
+                : (
+                    widget.outputs[0]
+                        ? widget.outputs[0].value
+                        : ""
+                );
+        }
+
+        if (widget.language === "Expression") {
+            return this.safeEvaluateExpression(
+                source,
+                context
+            );
+        }
+
+        if (widget.language === "Bash") {
+            const echoLines =
+                source
+                    .split(/\r?\n/)
+                    .map((line) => line.trim())
+                    .filter(
+                        (line) =>
+                            /^echo\s+/i.test(
+                                line
+                            )
+                    );
+
+            if (echoLines.length === 0) {
+                return widget.inputs[0]
+                    ? widget.inputs[0].value
+                    : "";
+            }
+
+            let echoValue =
+                echoLines[
+                    echoLines.length - 1
+                ].replace(
+                    /^echo\s+/i,
+                    ""
+                );
+
+            const arithmeticMatch =
+                echoValue.match(
+                    /^\$\(\((.*)\)\)$/
+                );
+
+            if (arithmeticMatch) {
+                return this.safeEvaluateExpression(
+                    arithmeticMatch[1],
+                    context
+                );
+            }
+
+            echoValue =
+                this.expandScriptVariables(
+                    echoValue,
+                    context
+                );
+
+            return echoValue.replace(
+                /^(["'])([\s\S]*)\1$/,
+                "$2"
+            );
+        }
+
+        if (widget.language === "Python") {
+            const lines =
+                source.split(/\r?\n/);
+
+            let expression = "";
+
+            for (
+                let index =
+                    lines.length - 1;
+                index >= 0;
+                index -= 1
+            ) {
+                const line =
+                    lines[index].trim();
+
+                const printMatch =
+                    line.match(
+                        /^print\s*\((.*)\)\s*$/
+                    );
+
+                if (printMatch) {
+                    expression =
+                        printMatch[1];
+                    break;
+                }
+
+                const returnMatch =
+                    line.match(
+                        /^return\s+(.+)$/
+                    );
+
+                if (returnMatch) {
+                    expression =
+                        returnMatch[1];
+                    break;
+                }
+            }
+
+            return expression
+                ? this.safeEvaluateExpression(
+                    expression,
+                    context
+                )
+                : (
+                    widget.inputs[0]
+                        ? widget.inputs[0].value
+                        : ""
+                );
+        }
+
+        if (widget.language === "JavaScript") {
+            const returnMatch =
+                source.match(
+                    /return\s+([\s\S]*?);?\s*$/m
+                );
+
+            if (returnMatch) {
+                return this.safeEvaluateExpression(
+                    returnMatch[1],
+                    context
+                );
+            }
+
+            return widget.inputs[0]
+                ? widget.inputs[0].value
+                : "";
+        }
+
+        return widget.inputs[0]
+            ? widget.inputs[0].value
+            : "";
+    }
+
+    applyExecutionResult(
+        widget,
+        result
+    ) {
+        if (widget.outputs.length === 0) {
+            return;
+        }
+
+        if (
+            Array.isArray(result)
+        ) {
+            widget.outputs.forEach(
+                (output, index) => {
+                    if (
+                        index <
+                        result.length
+                    ) {
+                        output.value =
+                            result[index];
+                    }
+                }
+            );
+
+            return;
+        }
+
+        if (
+            result &&
+            typeof result === "object"
+        ) {
+            let matchedOutput = false;
+
+            widget.outputs.forEach(
+                (output) => {
+                    if (
+                        Object.prototype.hasOwnProperty.call(
+                            result,
+                            output.name
+                        )
+                    ) {
+                        output.value =
+                            result[output.name];
+                        matchedOutput = true;
+                    }
+                }
+            );
+
+            if (matchedOutput) {
+                return;
+            }
+        }
+
+        if (
+            widget.language ===
+            "Pass-through" &&
+            widget.outputs.length > 1
+        ) {
+            widget.outputs.forEach(
+                (output) => {
+                    output.value = result;
+                }
+            );
+
+            return;
+        }
+
+        widget.outputs[0].value = result;
+    }
+
+    estimateWidgetMemory(widget) {
+        const payload =
+            JSON.stringify(
+                {
+                    inputs: widget.inputs,
+                    outputs: widget.outputs,
+                    source: widget.source,
+                    language: widget.language
+                }
+            );
+
+        let bytes = payload.length;
+
+        if (
+            typeof TextEncoder !==
+            "undefined"
+        ) {
+            bytes =
+                new TextEncoder()
+                    .encode(payload)
+                    .length;
+        }
+
+        return Math.max(
+            0.5,
+            bytes / 1024
+        );
+    }
+
+    async runWorkflow() {
+        if (this.isWorkflowRunning) {
+            return;
+        }
+
+        const report =
+            this.validateWorkflow(false);
+
+        if (!report.valid) {
+            await this.showMessageDialog({
+                title: "Workflow Cannot Run",
+                message:
+                    this.formatValidationReport(
+                        report
+                    ),
+                tone: "warning",
+                confirmLabel: "Review Workflow"
+            });
+            return;
+        }
+
+        const topology =
+            this.getTopologicalOrder();
+
+        this.executionRunId += 1;
+        const runId =
+            this.executionRunId;
+
+        this.isWorkflowRunning = true;
+        this.updateRunControls();
+
+        this.widgets.forEach(
+            (widget) => {
+                widget.runtimeMs = 0;
+                widget.memoryKb = 0;
+                widget.lastError = "";
+                widget.setStatus(
+                    widget.type === "Start"
+                        ? "idle"
+                        : "waiting",
+                    0,
+                    0
+                );
+            }
+        );
+
+        this.updateStats();
+
+        try {
+            for (
+                const widget of
+                topology.order
+            ) {
+                if (
+                    runId !==
+                    this.executionRunId
+                ) {
+                    return;
+                }
+
+                widget.inputs.forEach(
+                    (input) => {
+                        const incoming =
+                            this.getIncomingConnection(
+                                widget,
+                                input.id
+                            );
+
+                        if (incoming) {
+                            const sourceOutput =
+                                incoming.sourceWidget
+                                    .getOutputById(
+                                        incoming.sourcePortId
+                                    );
+
+                            input.value =
+                                sourceOutput
+                                    ? sourceOutput.value
+                                    : "";
+                        } else {
+                            input.value =
+                                input.manualValue;
+                        }
+                    }
+                );
+
+                widget.refreshContent();
+                widget.setStatus(
+                    "running",
+                    0,
+                    0
+                );
+                this.updateStats();
+
+                if (
+                    this.selectedWidget ===
+                    widget
+                ) {
+                    this.showWidgetProperties(
+                        widget
+                    );
+                }
+
+                const startedAt =
+                    performance.now();
+
+                const delay =
+                    Math.max(
+                        0,
+                        Number(
+                            widget.executionDelayMs
+                        ) || 0
+                    ) +
+                    this.getScriptDelay(
+                        widget
+                    );
+
+                await this.waitForExecution(
+                    delay,
+                    runId
+                );
+
+                if (
+                    widget.type !== "Start" ||
+                    (
+                        widget.source &&
+                        widget.language !==
+                            "Pass-through"
+                    )
+                ) {
+                    const context =
+                        this.buildInputContext(
+                            widget
+                        );
+
+                    const result =
+                        this.interpretWidgetSource(
+                            widget,
+                            context
+                        );
+
+                    this.applyExecutionResult(
+                        widget,
+                        result
+                    );
+                }
+
+                widget.outputs.forEach(
+                    (output) => {
+                        this.propagateOutputValue(
+                            widget,
+                            output.id
+                        );
+                    }
+                );
+
+                const runtime =
+                    performance.now() -
+                    startedAt;
+
+                const memory =
+                    this.estimateWidgetMemory(
+                        widget
+                    );
+
+                widget.setStatus(
+                    "finished",
+                    runtime,
+                    memory
+                );
+
+                widget.refreshContent();
+                this.updateStats();
+
+                if (
+                    this.selectedWidget ===
+                    widget
+                ) {
+                    this.showWidgetProperties(
+                        widget
+                    );
+                }
+            }
+        } catch (error) {
+            if (
+                runId !==
+                this.executionRunId
+            ) {
+                return;
+            }
+
+            const runningWidget =
+                this.widgets.find(
+                    (widget) =>
+                        widget.status ===
+                        "running"
+                );
+
+            if (runningWidget) {
+                runningWidget.setStatus(
+                    "error",
+                    runningWidget.runtimeMs,
+                    this.estimateWidgetMemory(
+                        runningWidget
+                    ),
+                    error.message
+                );
+            }
+
+            await this.showMessageDialog({
+                title: "Workflow Stopped",
+                message:
+                    `Workflow execution stopped: ${error.message}`,
+                tone: "error",
+                confirmLabel: "Close"
+            });
+        } finally {
+            if (
+                runId ===
+                this.executionRunId
+            ) {
+                this.isWorkflowRunning = false;
+            }
+
+            this.lastRunRuntimeMs =
+                this.widgets.reduce(
+                    (total, widget) =>
+                        total +
+                        (
+                            Number(
+                                widget.runtimeMs
+                            ) || 0
+                        ),
+                    0
+                );
+
+            this.lastRunMemoryKb =
+                this.widgets.reduce(
+                    (total, widget) =>
+                        total +
+                        (
+                            Number(
+                                widget.memoryKb
+                            ) || 0
+                        ),
+                    0
+                );
+
+            this.updateRunControls();
+            this.updateStats();
+            this.updateWorkflowMap();
+            this.saveState();
+
+            if (this.selectedWidget) {
+                this.showWidgetProperties(
+                    this.selectedWidget
+                );
+            }
+        }
     }
 
     createHistorySnapshot() {
@@ -3882,7 +6485,7 @@ class Board {
 
     getWorkflowData() {
         return {
-            version: 1,
+            version: 2,
 
             workspaceWidth:
                 this.workspaceWidth,
@@ -3972,6 +6575,271 @@ class Board {
 
             this.contextMenu = null;
         }
+    }
+
+    showAppDialog({
+        title = "Workflow Builder",
+        message = "",
+        mode = "message",
+        tone = "info",
+        value = "",
+        placeholder = "",
+        confirmLabel = "OK",
+        cancelLabel = "Cancel",
+        danger = false
+    } = {}) {
+        /*
+         * Replaces browser alert/confirm/prompt windows with a
+         * centered dialog that matches the workflow editor.
+         */
+        if (this.activeDialog) {
+            this.activeDialog.close(null);
+        }
+
+        return new Promise(
+            (resolve) => {
+                const overlay =
+                    document.createElement("div");
+                overlay.className =
+                    "app-dialog-overlay";
+
+                const dialog =
+                    document.createElement("section");
+                dialog.className =
+                    `app-dialog app-dialog-${tone}`;
+                dialog.setAttribute("role", "dialog");
+                dialog.setAttribute("aria-modal", "true");
+
+                const titleId =
+                    `app-dialog-title-${Date.now()}-${Math.random()
+                        .toString(16)
+                        .slice(2)}`;
+                dialog.setAttribute("aria-labelledby", titleId);
+
+                const header =
+                    document.createElement("div");
+                header.className =
+                    "app-dialog-header";
+
+                const toneIcon =
+                    document.createElement("span");
+                toneIcon.className =
+                    "app-dialog-icon";
+                toneIcon.setAttribute("aria-hidden", "true");
+
+                const toneIcons = {
+                    info: "i",
+                    success: "✓",
+                    warning: "!",
+                    error: "!"
+                };
+                toneIcon.textContent =
+                    toneIcons[tone] || "i";
+
+                const heading =
+                    document.createElement("h2");
+                heading.id = titleId;
+                heading.className =
+                    "app-dialog-title";
+                heading.textContent = title;
+
+                header.appendChild(toneIcon);
+                header.appendChild(heading);
+
+                const body =
+                    document.createElement("div");
+                body.className =
+                    "app-dialog-body";
+
+                const messageElement =
+                    document.createElement("div");
+                messageElement.className =
+                    "app-dialog-message";
+                messageElement.textContent =
+                    String(message || "");
+                body.appendChild(messageElement);
+
+                let promptInput = null;
+
+                if (mode === "prompt") {
+                    promptInput =
+                        document.createElement("input");
+                    promptInput.type = "text";
+                    promptInput.className =
+                        "app-dialog-input";
+                    promptInput.value =
+                        String(value ?? "");
+                    promptInput.placeholder = placeholder;
+                    body.appendChild(promptInput);
+                }
+
+                const footer =
+                    document.createElement("div");
+                footer.className =
+                    "app-dialog-actions";
+
+                let finished = false;
+
+                const close = (result) => {
+                    if (finished) {
+                        return;
+                    }
+
+                    finished = true;
+
+                    document.removeEventListener(
+                        "keydown",
+                        keyHandler,
+                        true
+                    );
+
+                    overlay.remove();
+
+                    if (
+                        this.activeDialog &&
+                        this.activeDialog.overlay === overlay
+                    ) {
+                        this.activeDialog = null;
+                    }
+
+                    resolve(result);
+                };
+
+                const keyHandler = (event) => {
+                    if (event.key === "Escape") {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        close(
+                            mode === "message"
+                                ? true
+                                : null
+                        );
+                        return;
+                    }
+
+                    if (event.key === "Enter") {
+                        event.preventDefault();
+                        event.stopPropagation();
+
+                        if (
+                            mode === "prompt" &&
+                            promptInput
+                        ) {
+                            close(promptInput.value);
+                        } else {
+                            close(true);
+                        }
+                    }
+                };
+
+                if (
+                    mode === "confirm" ||
+                    mode === "prompt"
+                ) {
+                    const cancelButton =
+                        document.createElement("button");
+                    cancelButton.type = "button";
+                    cancelButton.className =
+                        "app-dialog-button app-dialog-button-secondary";
+                    cancelButton.textContent = cancelLabel;
+                    cancelButton.addEventListener(
+                        "click",
+                        () => close(null)
+                    );
+                    footer.appendChild(cancelButton);
+                }
+
+                const confirmButton =
+                    document.createElement("button");
+                confirmButton.type = "button";
+                confirmButton.className =
+                    danger
+                        ? "app-dialog-button app-dialog-button-danger"
+                        : "app-dialog-button app-dialog-button-primary";
+                confirmButton.textContent = confirmLabel;
+                confirmButton.addEventListener(
+                    "click",
+                    () => {
+                        if (
+                            mode === "prompt" &&
+                            promptInput
+                        ) {
+                            close(promptInput.value);
+                        } else {
+                            close(true);
+                        }
+                    }
+                );
+                footer.appendChild(confirmButton);
+
+                dialog.appendChild(header);
+                dialog.appendChild(body);
+                dialog.appendChild(footer);
+                overlay.appendChild(dialog);
+                document.body.appendChild(overlay);
+
+                overlay.addEventListener(
+                    "pointerdown",
+                    (event) => {
+                        /* Informational dialogs may close on backdrop click. */
+                        if (
+                            event.target === overlay &&
+                            mode === "message"
+                        ) {
+                            close(true);
+                        }
+                    }
+                );
+
+                document.addEventListener(
+                    "keydown",
+                    keyHandler,
+                    true
+                );
+
+                this.activeDialog = {
+                    overlay,
+                    close
+                };
+
+                requestAnimationFrame(
+                    () => {
+                        dialog.classList.add("visible");
+
+                        if (promptInput) {
+                            promptInput.focus();
+                            promptInput.select();
+                        } else {
+                            confirmButton.focus();
+                        }
+                    }
+                );
+            }
+        );
+    }
+
+    showMessageDialog(options = {}) {
+        return this.showAppDialog({
+            ...options,
+            mode: "message"
+        });
+    }
+
+    async showConfirmDialog(options = {}) {
+        const result =
+            await this.showAppDialog({
+                ...options,
+                mode: "confirm"
+            });
+
+        return result === true;
+    }
+
+    showPromptDialog(options = {}) {
+        return this.showAppDialog({
+            ...options,
+            mode: "prompt"
+        });
     }
 
     createContextMenuButton(
@@ -4076,7 +6944,7 @@ class Board {
             `${top}px`;
     }
 
-    renameWidget(widget) {
+    async renameWidget(widget) {
         if (
             !widget ||
             !this.widgets.includes(widget)
@@ -4085,10 +6953,14 @@ class Board {
         }
 
         const enteredTitle =
-            window.prompt(
-                "Rename widget:",
-                widget.title
-            );
+            await this.showPromptDialog({
+                title: "Rename Widget",
+                message:
+                    "Enter a new name for this widget.",
+                value: widget.title,
+                placeholder: "Widget name",
+                confirmLabel: "Rename"
+            });
 
         if (enteredTitle === null) {
             return;
@@ -4139,13 +7011,22 @@ class Board {
 
         const duplicateOffset = 30;
 
+        const width =
+            widget.element
+                ? widget.element.offsetWidth
+                : 210;
+
+        const height =
+            widget.element
+                ? widget.element.offsetHeight
+                : 120;
+
         const duplicateX =
             Math.max(
                 0,
                 Math.min(
-                    this.workspaceWidth - 170,
-                    widget.x +
-                        duplicateOffset
+                    this.workspaceWidth - width,
+                    widget.x + duplicateOffset
                 )
             );
 
@@ -4153,9 +7034,8 @@ class Board {
             Math.max(
                 0,
                 Math.min(
-                    this.workspaceHeight - 90,
-                    widget.y +
-                        duplicateOffset
+                    this.workspaceHeight - height,
+                    widget.y + duplicateOffset
                 )
             );
 
@@ -4169,18 +7049,29 @@ class Board {
                 duplicateY
             );
 
-        this.addWidget(
-            duplicate
+        const duplicateData =
+            widget.toJSON();
+
+        duplicateData.status =
+            widget.type === "Start"
+                ? "idle"
+                : "waiting";
+
+        duplicateData.runtimeMs = 0;
+        duplicateData.memoryKb = 0;
+        duplicateData.lastError = "";
+
+        duplicate.applyJSON(
+            duplicateData
         );
 
-        this.selectWidget(
-            duplicate
-        );
+        this.addWidget(duplicate);
+        this.selectWidget(duplicate);
 
         return duplicate;
     }
 
-    disconnectAllConnections(widget) {
+    async disconnectAllConnections(widget) {
         if (
             !widget ||
             !this.widgets.includes(widget)
@@ -4209,9 +7100,13 @@ class Board {
                 : "connections";
 
         const confirmed =
-            window.confirm(
-                `Disconnect all ${attachedConnections.length} ${connectionWord} from "${widget.title}"?`
-            );
+            await this.showConfirmDialog({
+                title: "Disconnect All",
+                message:
+                    `Disconnect all ${attachedConnections.length} ${connectionWord} from "${widget.title}"?`,
+                confirmLabel: "Disconnect",
+                danger: true
+            });
 
         if (!confirmed) {
             return;
@@ -4384,11 +7279,15 @@ class Board {
         menu.appendChild(
             this.createContextMenuButton(
                 "Delete",
-                () => {
+                async () => {
                     const confirmed =
-                        window.confirm(
-                            `Delete "${widget.title}"?`
-                        );
+                        await this.showConfirmDialog({
+                            title: "Delete Widget",
+                            message:
+                                `Delete "${widget.title}"?`,
+                            confirmLabel: "Delete",
+                            danger: true
+                        });
 
                     if (confirmed) {
                         this.removeWidget(
@@ -4480,11 +7379,15 @@ class Board {
         menu.appendChild(
             this.createContextMenuButton(
                 "Delete Connection",
-                () => {
+                async () => {
                     const confirmed =
-                        window.confirm(
-                            `Delete connection from "${connection.sourceWidget.title}" to "${connection.targetWidget.title}"?`
-                        );
+                        await this.showConfirmDialog({
+                            title: "Delete Connection",
+                            message:
+                                `Delete connection from "${connection.sourceWidget.title}" to "${connection.targetWidget.title}"?`,
+                            confirmLabel: "Delete",
+                            danger: true
+                        });
 
                     if (confirmed) {
                         this.removeConnection(
@@ -4521,9 +7424,25 @@ class Board {
 
     startConnection(
         sourceWidget,
-        event
+        event,
+        sourcePortId = null
     ) {
         if (event.button !== 0) {
+            return;
+        }
+
+        const sourcePort =
+            sourceWidget &&
+            sourceWidget.getOutputById(
+                sourcePortId ||
+                (
+                    sourceWidget.outputs[0]
+                        ? sourceWidget.outputs[0].id
+                        : null
+                )
+            );
+
+        if (!sourcePort) {
             return;
         }
 
@@ -4531,6 +7450,9 @@ class Board {
 
         this.connectionSourceWidget =
             sourceWidget;
+
+        this.connectionSourcePortId =
+            sourcePort.id;
 
         const svgNamespace =
             "http://www.w3.org/2000/svg";
@@ -4600,6 +7522,7 @@ class Board {
     ) {
         if (
             !this.connectionSourceWidget ||
+            !this.connectionSourcePortId ||
             !this.connectionPreviewElement
         ) {
             return;
@@ -4607,12 +7530,10 @@ class Board {
 
         const sourcePoint =
             this.connectionSourceWidget
-                .getOutputPortPosition();
+                .getOutputPortPosition(
+                    this.connectionSourcePortId
+                );
 
-        /*
-        * See whether we're close enough
-        * to magnetically snap to an input.
-        */
         const nearestInputPort =
             this.findNearestInputPort(
                 clientX,
@@ -4631,7 +7552,6 @@ class Board {
                 this.screenToWorkspace(
                     rect.left +
                         rect.width / 2,
-
                     rect.top +
                         rect.height / 2
                 );
@@ -4657,10 +7577,6 @@ class Board {
                 pathData
             );
 
-
-        /*
-        * Remove the old highlight.
-        */
         document
             .querySelectorAll(
                 ".input-port.connection-target"
@@ -4671,11 +7587,6 @@ class Board {
                 );
             });
 
-
-        /*
-        * Highlight the port we're
-        * magnetically snapping toward.
-        */
         if (nearestInputPort) {
             nearestInputPort.classList.add(
                 "connection-target"
@@ -4706,6 +7617,17 @@ class Board {
         );
     }
 
+    getPortIdFromPort(portElement) {
+        if (!portElement) {
+            return null;
+        }
+
+        return (
+            portElement.dataset.portId ||
+            null
+        );
+    }
+
     findNearestInputPort(
         clientX,
         clientY,
@@ -4713,7 +7635,7 @@ class Board {
         maxDistance = 30
     ) {
         const inputPorts =
-            document.querySelectorAll(
+            this.workspace.querySelectorAll(
                 ".input-port"
             );
 
@@ -4728,14 +7650,19 @@ class Board {
                         port
                     );
 
-                /*
-                * Don't connect a widget
-                * to itself.
-                */
+                const targetPortId =
+                    this.getPortIdFromPort(
+                        port
+                    );
+
                 if (
                     !targetWidget ||
+                    !targetPortId ||
                     targetWidget ===
-                        sourceWidget
+                        sourceWidget ||
+                    !targetWidget.getInputById(
+                        targetPortId
+                    )
                 ) {
                     return;
                 }
@@ -4782,22 +7709,20 @@ class Board {
         const sourceWidget =
             this.connectionSourceWidget;
 
-        if (!sourceWidget) {
+        const sourcePortId =
+            this.connectionSourcePortId;
+
+        if (
+            !sourceWidget ||
+            !sourcePortId
+        ) {
             this.cancelConnectionDrag();
             return;
         }
 
         try {
-            /*
-            * updateConnectionPreview() already found
-            * the nearest valid input and gave it the
-            * connection-target class.
-            *
-            * Use that exact port instead of trying
-            * to calculate the target again.
-            */
             const inputPort =
-                document.querySelector(
+                this.workspace.querySelector(
                     ".input-port.connection-target"
                 );
 
@@ -4810,35 +7735,89 @@ class Board {
                     inputPort
                 );
 
+            const targetPortId =
+                this.getPortIdFromPort(
+                    inputPort
+                );
+
             if (
                 !targetWidget ||
-                targetWidget === sourceWidget
+                !targetPortId ||
+                targetWidget === sourceWidget ||
+                !targetWidget.getInputById(
+                    targetPortId
+                )
             ) {
                 return;
             }
 
-            const alreadyConnected =
-                this.connections.some(
-                    (connection) => {
-                        return (
-                            connection.sourceWidget ===
-                                sourceWidget &&
-                            connection.targetWidget ===
-                                targetWidget
-                        );
-                    }
+            const sourcePort =
+                sourceWidget.getOutputById(
+                    sourcePortId
                 );
 
-            if (alreadyConnected) {
+            if (!sourcePort) {
+                return;
+            }
+
+            const existingConnections =
+                this.connections.filter(
+                    (connection) =>
+                        connection.targetWidget ===
+                            targetWidget &&
+                        connection.targetPortId ===
+                            targetPortId
+                );
+
+            if (
+                existingConnections.length === 1 &&
+                existingConnections[0]
+                    .sourceWidget ===
+                    sourceWidget &&
+                existingConnections[0]
+                    .sourcePortId ===
+                    sourcePortId
+            ) {
                 return;
             }
 
             this.recordHistoryState();
 
+            existingConnections.forEach(
+                (connection) => {
+                    this.removeConnection(
+                        connection,
+                        false
+                    );
+                }
+            );
+
             this.addConnection(
                 sourceWidget,
-                targetWidget
+                targetWidget,
+                sourcePortId,
+                targetPortId
             );
+
+            const targetInput =
+                targetWidget.getInputById(
+                    targetPortId
+                );
+
+            if (targetInput) {
+                targetInput.value =
+                    sourcePort.value;
+                targetWidget.refreshContent();
+            }
+
+            if (
+                this.selectedWidget ===
+                targetWidget
+            ) {
+                this.showWidgetProperties(
+                    targetWidget
+                );
+            }
         } finally {
             this.cancelConnectionDrag();
         }
@@ -4846,8 +7825,77 @@ class Board {
 
     addConnection(
         sourceWidget,
-        targetWidget
+        targetWidget,
+        sourcePortId = null,
+        targetPortId = null
     ) {
+        if (
+            !sourceWidget ||
+            !targetWidget ||
+            sourceWidget === targetWidget
+        ) {
+            return null;
+        }
+
+        const resolvedSourcePortId =
+            sourcePortId ||
+            (
+                sourceWidget.outputs[0]
+                    ? sourceWidget.outputs[0].id
+                    : null
+            );
+
+        const resolvedTargetPortId =
+            targetPortId ||
+            (
+                targetWidget.inputs[0]
+                    ? targetWidget.inputs[0].id
+                    : null
+            );
+
+        if (
+            !resolvedSourcePortId ||
+            !resolvedTargetPortId ||
+            !sourceWidget.getOutputById(
+                resolvedSourcePortId
+            ) ||
+            !targetWidget.getInputById(
+                resolvedTargetPortId
+            )
+        ) {
+            return null;
+        }
+
+        const duplicate =
+            this.connections.find(
+                (connection) =>
+                    connection.sourceWidget ===
+                        sourceWidget &&
+                    connection.targetWidget ===
+                        targetWidget &&
+                    connection.sourcePortId ===
+                        resolvedSourcePortId &&
+                    connection.targetPortId ===
+                        resolvedTargetPortId
+            );
+
+        if (duplicate) {
+            return duplicate;
+        }
+
+        const occupiedInput =
+            this.connections.find(
+                (connection) =>
+                    connection.targetWidget ===
+                        targetWidget &&
+                    connection.targetPortId ===
+                        resolvedTargetPortId
+            );
+
+        if (occupiedInput) {
+            return null;
+        }
+
         const id =
             `connection-${this.nextConnectionNumber}`;
 
@@ -4858,7 +7906,9 @@ class Board {
                 this,
                 id,
                 sourceWidget,
-                targetWidget
+                targetWidget,
+                resolvedSourcePortId,
+                resolvedTargetPortId
             );
 
         const connectionElement =
@@ -4889,6 +7939,9 @@ class Board {
             null;
 
         this.connectionSourceWidget =
+            null;
+
+        this.connectionSourcePortId =
             null;
 
         document
@@ -4963,6 +8016,12 @@ class Board {
             this.recordHistoryState();
         }
 
+        const targetWidget =
+            connection.targetWidget;
+
+        const targetPortId =
+            connection.targetPortId;
+
         this.hoverPeekConnections =
             this.hoverPeekConnections.filter(
                 (currentConnection) =>
@@ -4977,8 +8036,7 @@ class Board {
             connection;
 
         if (wasSelected) {
-            this.selectedConnection =
-                null;
+            this.selectedConnection = null;
         }
 
         connection.remove();
@@ -4988,11 +8046,39 @@ class Board {
             1
         );
 
-        if (wasSelected) {
-            this.showNoSelectionMessage();
-            this.updateStats();
+        const targetInput =
+            targetWidget &&
+            targetWidget.getInputById(
+                targetPortId
+            );
+
+        if (
+            targetInput &&
+            !this.getIncomingConnection(
+                targetWidget,
+                targetPortId
+            )
+        ) {
+            targetInput.value =
+                targetInput.manualValue;
+
+            targetWidget.refreshContent();
         }
 
+        if (wasSelected) {
+            this.showNoSelectionMessage();
+        }
+
+        if (
+            this.selectedWidget ===
+            targetWidget
+        ) {
+            this.showWidgetProperties(
+                targetWidget
+            );
+        }
+
+        this.updateStats();
         this.updateWorkflowMap();
         this.scheduleSave();
     }

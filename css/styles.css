@@ -1013,3 +1013,597 @@ button {
     font-weight: 600;
 }
 
+
+/* =========================================================
+   Configurable I/O + execution system
+   ========================================================= */
+
+.workflow-dropdown-content {
+    min-width: 245px;
+}
+
+.dropdown-content button:disabled,
+.widget-context-menu button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* Properties sidebar sections */
+.property-section {
+    margin: 0 0 14px;
+    padding: 0 0 14px;
+    border-bottom: 1px solid #cbd5e1;
+}
+
+.property-section-title {
+    margin-bottom: 8px;
+    color: #1f2937;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+}
+
+.property-section-description {
+    margin: -2px 0 9px;
+    color: #64748b;
+    font-size: 11.5px;
+    line-height: 1.35;
+}
+
+.property-section-body {
+    min-width: 0;
+}
+
+.property-row select,
+.property-row textarea,
+.io-property-card input,
+.io-property-card select {
+    width: 100%;
+    min-width: 0;
+    padding: 7px 8px;
+    border: 1px solid #9ca3af;
+    border-radius: 4px;
+    background-color: white;
+    color: #1f2937;
+}
+
+.property-row select:focus,
+.property-row textarea:focus,
+.io-property-card input:focus,
+.io-property-card select:focus {
+    outline: 2px solid rgb(37 99 235 / 18%);
+    border-color: #2563eb;
+}
+
+.property-readout {
+    padding: 7px 8px;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    background-color: #f8fafc;
+    color: #475569;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.compact-property-row {
+    margin-bottom: 4px;
+}
+
+/* Input/output configuration cards */
+.io-property-card {
+    display: grid;
+    gap: 6px;
+    margin-bottom: 8px;
+    padding: 8px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    background-color: #f8fafc;
+}
+
+.io-property-card:focus-within {
+    border-color: #93c5fd;
+    box-shadow: 0 0 0 2px rgb(37 99 235 / 8%);
+}
+
+.io-card-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    color: #64748b;
+    font-size: 10.5px;
+    line-height: 1.25;
+}
+
+.inline-check-label,
+.status-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: #374151;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.inline-check-label input,
+.status-checkbox-label input {
+    width: auto;
+    margin: 0;
+}
+
+.io-current-value {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+}
+
+.io-add-button,
+.io-remove-button {
+    width: 100%;
+    padding: 7px 8px;
+    border: 1px solid #94a3b8;
+    border-radius: 4px;
+    background-color: white;
+}
+
+.io-add-button {
+    font-weight: 600;
+}
+
+.io-add-button:hover {
+    border-color: #64748b;
+    background-color: #f1f5f9;
+}
+
+.io-remove-button {
+    color: #b91c1c;
+}
+
+.io-remove-button:hover {
+    border-color: #fca5a5;
+    background-color: #fef2f2;
+}
+
+.input-source-select {
+    font-size: 12px;
+}
+
+/* Script editor */
+.script-source-input {
+    min-height: 100px;
+    resize: vertical;
+    font-family:
+        Consolas,
+        "SFMono-Regular",
+        Menlo,
+        Monaco,
+        monospace;
+    font-size: 12px;
+    line-height: 1.4;
+    tab-size: 4;
+}
+
+.script-source-input:disabled {
+    background-color: #f1f5f9;
+    color: #94a3b8;
+}
+
+/* Runtime/status metrics */
+.property-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    margin-top: 9px;
+}
+
+.property-metric {
+    min-width: 0;
+    padding: 7px;
+    border: 1px solid #dbe1e8;
+    border-radius: 5px;
+    background-color: #f8fafc;
+}
+
+.property-metric-label {
+    display: block;
+    margin-bottom: 2px;
+    color: #64748b;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.property-metric strong {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    color: #1f2937;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.property-error-message {
+    margin-bottom: 8px;
+    padding: 7px 8px;
+    border: 1px solid #fecaca;
+    border-radius: 5px;
+    background-color: #fef2f2;
+    color: #b91c1c;
+    font-size: 11px;
+    line-height: 1.35;
+}
+
+.stacked-property-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    margin-top: 4px;
+}
+
+.primary-property-button {
+    border-color: #2563eb !important;
+    background-color: #2563eb !important;
+    color: white !important;
+    font-weight: 600;
+}
+
+.primary-property-button:hover {
+    background-color: #1d4ed8 !important;
+}
+
+/* =========================================================
+   Widget I/O rows and per-port endpoints
+   ========================================================= */
+
+.widget {
+    width: 210px;
+    min-height: 84px;
+}
+
+.widget-io-content {
+    padding: 7px 10px 8px;
+}
+
+.widget-io-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-height: 22px;
+    min-width: 0;
+    color: #475569;
+    font-size: 12px;
+    line-height: 1.25;
+}
+
+.widget-io-text {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.widget-output-row .widget-io-text {
+    text-align: left;
+}
+
+.widget-empty-io {
+    padding: 3px 0;
+    color: #94a3b8;
+    font-size: 11px;
+    font-style: italic;
+}
+
+.widget-io-row .input-port {
+    left: -18px;
+}
+
+.widget-io-row .output-port {
+    right: -18px;
+}
+
+.widget-status {
+    min-height: 27px;
+    padding: 6px 10px;
+    border-top: 1px solid #e2e8f0;
+    border-radius: 0 0 7px 7px;
+    background-color: #f8fafc;
+    color: #64748b;
+    font-size: 10.5px;
+    line-height: 1.35;
+}
+
+.widget-status.status-idle {
+    color: #64748b;
+}
+
+.widget-status.status-waiting {
+    color: #64748b;
+}
+
+.widget-status.status-running {
+    background-color: #eff6ff;
+    color: #1d4ed8;
+    font-weight: 600;
+}
+
+.widget-status.status-finished {
+    background-color: #f0fdf4;
+    color: #15803d;
+}
+
+.widget-status.status-error {
+    background-color: #fef2f2;
+    color: #b91c1c;
+    font-weight: 600;
+}
+
+.widget-status.status-stopped {
+    background-color: #fff7ed;
+    color: #c2410c;
+}
+
+/* Keep endpoint ports visible when Connection Peek fades a widget. */
+.widget.connection-peek-covering .widget-content {
+    opacity: 1;
+}
+
+.widget.connection-peek-covering .widget-io-text,
+.widget.connection-peek-covering .widget-empty-io,
+.widget.connection-peek-covering .widget-status {
+    opacity: 0.12;
+}
+
+.widget.connection-peek-covering .widget-port.connection-peek-port {
+    opacity: 1;
+}
+
+/* Slightly more compact right-panel controls on narrow widths. */
+@media (max-width: 900px) {
+    .property-metrics-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.widget[data-status="running"] {
+    border-color: #2563eb;
+    box-shadow:
+        0 0 0 2px rgb(37 99 235 / 12%),
+        0 6px 14px rgb(0 0 0 / 14%);
+}
+
+.widget[data-status="finished"] {
+    border-color: #86a98f;
+}
+
+.widget[data-status="error"] {
+    border-color: #dc2626;
+    box-shadow:
+        0 0 0 2px rgb(220 38 38 / 10%),
+        0 6px 14px rgb(0 0 0 / 14%);
+}
+
+.io-property-card.invalid {
+    border-color: #f59e0b;
+    background-color: #fffbeb;
+}
+
+.io-validation-message {
+    padding: 5px 6px;
+    border-radius: 4px;
+    background-color: #fef3c7;
+    color: #92400e;
+    font-size: 10.5px;
+    line-height: 1.3;
+}
+
+/* =========================================================
+   In-app dialogs
+   Replaces browser alert / confirm / prompt windows.
+   ========================================================= */
+
+.app-dialog-overlay {
+    position: fixed;
+    inset: 0;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    padding: 24px;
+
+    background-color: rgb(15 23 42 / 48%);
+    backdrop-filter: blur(2px);
+
+    z-index: 200000;
+}
+
+.app-dialog {
+    width: min(460px, calc(100vw - 48px));
+    max-height: min(70vh, 620px);
+
+    overflow: hidden;
+
+    border: 1px solid #94a3b8;
+    border-radius: 10px;
+
+    background-color: white;
+    color: #1f2937;
+
+    box-shadow:
+        0 22px 60px
+        rgb(15 23 42 / 32%);
+
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+
+    transition:
+        opacity 120ms ease,
+        transform 120ms ease;
+}
+
+.app-dialog.visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+}
+
+.app-dialog-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+
+    padding: 14px 16px;
+
+    border-bottom: 1px solid #cbd5e1;
+    background-color: #e2e8f0;
+}
+
+.app-dialog-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+
+    width: 24px;
+    height: 24px;
+
+    border-radius: 50%;
+
+    background-color: #dbeafe;
+    color: #1d4ed8;
+
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.app-dialog-success .app-dialog-icon {
+    background-color: #dcfce7;
+    color: #15803d;
+}
+
+.app-dialog-warning .app-dialog-icon {
+    background-color: #fef3c7;
+    color: #b45309;
+}
+
+.app-dialog-error .app-dialog-icon {
+    background-color: #fee2e2;
+    color: #b91c1c;
+}
+
+.app-dialog-title {
+    min-width: 0;
+    margin: 0;
+
+    color: #1f2937;
+
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.app-dialog-body {
+    max-height: 440px;
+    overflow: auto;
+
+    padding: 18px 18px 16px;
+}
+
+.app-dialog-message {
+    color: #475569;
+
+    font-size: 14px;
+    line-height: 1.55;
+
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.app-dialog-input {
+    width: 100%;
+    margin-top: 14px;
+    padding: 9px 10px;
+
+    border: 1px solid #94a3b8;
+    border-radius: 6px;
+
+    background-color: white;
+    color: #1f2937;
+
+    outline: none;
+}
+
+.app-dialog-input:focus {
+    border-color: #2563eb;
+
+    box-shadow:
+        0 0 0 3px
+        rgb(37 99 235 / 14%);
+}
+
+.app-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+
+    padding: 12px 16px;
+
+    border-top: 1px solid #e2e8f0;
+    background-color: #f8fafc;
+}
+
+.app-dialog-button {
+    min-width: 82px;
+    padding: 8px 14px;
+
+    border: 1px solid transparent;
+    border-radius: 6px;
+
+    font-weight: 600;
+}
+
+.app-dialog-button-secondary {
+    border-color: #cbd5e1;
+
+    background-color: white;
+    color: #334155;
+}
+
+.app-dialog-button-secondary:hover {
+    background-color: #f1f5f9;
+}
+
+.app-dialog-button-primary {
+    border-color: #1d4ed8;
+
+    background-color: #2563eb;
+    color: white;
+}
+
+.app-dialog-button-primary:hover {
+    background-color: #1d4ed8;
+}
+
+.app-dialog-button-danger {
+    border-color: #b91c1c;
+
+    background-color: #dc2626;
+    color: white;
+}
+
+.app-dialog-button-danger:hover {
+    background-color: #b91c1c;
+}
+
+.app-dialog-button:focus-visible {
+    outline: 3px solid rgb(37 99 235 / 24%);
+    outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .app-dialog {
+        transition: none;
+    }
+}
