@@ -34,7 +34,7 @@ class Board {
 
         /* Guided interface tutorial. */
         this.tutorialStorageKey =
-            "workflowBuilderInterfaceTutorialSeenV3";
+            "workflowBuilderInterfaceTutorialSeenV4";
         this.tutorialActive = false;
         this.tutorialStepIndex = 0;
         this.tutorialSteps = [];
@@ -126,6 +126,20 @@ class Board {
             errors: [],
             warnings: []
         };
+
+        /*
+         * Research reproducibility state.
+         *
+         * These records intentionally live one level above normal Undo/Redo.
+         * Undo is for editing; run history and snapshots are for research evidence.
+         */
+        this.workflowMetadata =
+            this.createDefaultWorkflowMetadata();
+        this.runHistory = [];
+        this.runHistoryLimit = 30;
+        this.researchSnapshots = [];
+        this.researchSnapshotLimit = 20;
+        this.activeResearchPanel = null;
 
         /*
          * Runtime branch-state map.
@@ -581,6 +595,74 @@ class Board {
 
 
         /* =============================
+         * Research
+         * ============================= */
+        const researchMenu = document.createElement("div");
+        researchMenu.className = "dropdown-menu";
+        researchMenu.dataset.tour = "research-menu";
+
+        const researchButton = document.createElement("button");
+        researchButton.className = "dropdown-button";
+        researchButton.textContent = "Research";
+        researchButton.title = "Reproducibility tools";
+
+        const researchDropdown = document.createElement("div");
+        researchDropdown.className =
+            "dropdown-content research-dropdown-content";
+
+        const detailsItem = document.createElement("button");
+        detailsItem.type = "button";
+        detailsItem.textContent = "Workflow Details";
+        detailsItem.addEventListener("click", () => {
+            this.showWorkflowMetadataPanel();
+        });
+
+        const historyItem = document.createElement("button");
+        historyItem.type = "button";
+        historyItem.textContent = "Run History";
+        historyItem.addEventListener("click", () => {
+            this.showRunHistoryPanel();
+        });
+
+        const compareItem = document.createElement("button");
+        compareItem.type = "button";
+        compareItem.textContent = "Compare Runs";
+        compareItem.addEventListener("click", () => {
+            this.showRunComparisonPanel();
+        });
+
+        const snapshotsItem = document.createElement("button");
+        snapshotsItem.type = "button";
+        snapshotsItem.textContent = "Snapshots";
+        snapshotsItem.addEventListener("click", () => {
+            this.showResearchSnapshotsPanel();
+        });
+
+        const researchDivider =
+            document.createElement("div");
+        researchDivider.className = "dropdown-divider";
+
+        const saveSnapshotItem = document.createElement("button");
+        saveSnapshotItem.type = "button";
+        saveSnapshotItem.textContent = "Save Snapshot…";
+        saveSnapshotItem.addEventListener("click", () => {
+            this.saveNamedResearchSnapshot();
+        });
+
+        researchDropdown.appendChild(detailsItem);
+        researchDropdown.appendChild(historyItem);
+        researchDropdown.appendChild(compareItem);
+        researchDropdown.appendChild(snapshotsItem);
+        researchDropdown.appendChild(researchDivider);
+        researchDropdown.appendChild(saveSnapshotItem);
+        researchMenu.appendChild(researchButton);
+        researchMenu.appendChild(researchDropdown);
+
+        this.researchMenuButton = researchButton;
+        this.researchCompareMenuItem = compareItem;
+
+
+        /* =============================
          * Help
          * ============================= */
         const helpMenu = document.createElement("div");
@@ -603,6 +685,7 @@ class Board {
             ["widgets", "Widgets & Connections"],
             ["io", "Inputs & Outputs"],
             ["debug", "Data & Debugging"],
+            ["research", "Research & Reproducibility"],
             ["properties", "Properties Panel"],
             ["scripts", "Scripts & Languages"],
             ["decisions", "Decision Nodes"],
@@ -787,6 +870,7 @@ class Board {
         menuBar.appendChild(editMenu);
         menuBar.appendChild(viewMenu);
         menuBar.appendChild(workflowMenu);
+        menuBar.appendChild(researchMenu);
         menuBar.appendChild(helpMenu);
         menuBar.appendChild(historyControls);
         menuBar.appendChild(runControls);
@@ -6969,7 +7053,7 @@ class Board {
         this.saveState();
     }
 
-    clearWorkflow() {
+    clearWorkflow({ preserveResearch = false } = {}) {
         this.executionRunId += 1;
         this.isWorkflowRunning = false;
         this.isWorkflowPaused = false;
@@ -7009,6 +7093,13 @@ class Board {
         this.connectionMoveHandler = null;
         this.connectionEndHandler = null;
         this.connectionCancelHandler = null;
+
+        if (!preserveResearch) {
+            this.workflowMetadata =
+                this.createDefaultWorkflowMetadata();
+            this.runHistory = [];
+            this.researchSnapshots = [];
+        }
 
         this.showNoSelectionMessage();
         this.updateStats();
@@ -8063,8 +8154,13 @@ class Board {
         reader.readAsText(file);
     }
 
-    applyWorkflowData(workflowData) {
-        this.clearWorkflow();
+    applyWorkflowData(
+        workflowData,
+        { preserveResearch = false } = {}
+    ) {
+        this.clearWorkflow({
+            preserveResearch: true
+        });
 
         workflowData.widgets.forEach(
             (widgetData) => {
@@ -8192,6 +8288,30 @@ class Board {
         ) {
             this.rightPanelWidth =
                 workflowData.rightPanelWidth;
+        }
+
+        if (!preserveResearch) {
+            this.workflowMetadata =
+                this.normalizeWorkflowMetadata(
+                    workflowData.workflowMetadata
+                );
+
+            this.runHistory =
+                Array.isArray(workflowData.runHistory)
+                    ? workflowData.runHistory
+                        .slice(0, this.runHistoryLimit)
+                    : [];
+
+            this.researchSnapshots =
+                Array.isArray(
+                    workflowData.researchSnapshots
+                )
+                    ? workflowData.researchSnapshots
+                        .slice(
+                            0,
+                            this.researchSnapshotLimit
+                        )
+                    : [];
         }
 
         /*
@@ -8383,6 +8503,27 @@ class Board {
                 target: '[data-tour="workflow-menu"]',
                 prepare: openMenu("workflow-menu"),
                 text: "Run the whole workflow, one selected node, or everything after a selected node. You can also pause, resume, stop, validate, or reset statuses."
+            },
+            {
+                sections: ["research", "basics"],
+                title: "Research tools",
+                target: '[data-tour="research-menu"]',
+                prepare: openMenu("research-menu"),
+                text: "Keep experiment details, run history, comparisons, and checkpoints in one place."
+            },
+            {
+                sections: ["research"],
+                title: "Run history",
+                target: '[data-tour="research-menu"]',
+                prepare: openMenu("research-menu"),
+                text: "Every run saves its setup, inputs, outputs, runtime, memory, and result. Reproduce restores that setup and runs it again."
+            },
+            {
+                sections: ["research"],
+                title: "Snapshots and comparisons",
+                target: '[data-tour="research-menu"]',
+                prepare: openMenu("research-menu"),
+                text: "Snapshots are named checkpoints. Compare Runs shows performance and outputs from two experiments side by side."
             },
             {
                 sections: ["basics", "shortcuts"],
@@ -10985,6 +11126,15 @@ class Board {
         const runId =
             this.executionRunId;
 
+        const researchRunRecord =
+            this.createResearchRunRecord({
+                runId,
+                plan,
+                widget,
+                report,
+                executionOrder
+            });
+
         this.isWorkflowRunning = true;
         this.isWorkflowPaused = false;
         this.currentExecutionMode =
@@ -11392,6 +11542,23 @@ class Board {
                     0
                 );
 
+            this.finalizeResearchRunRecord(
+                researchRunRecord,
+                executionOrder,
+                {
+                    status:
+                        runFailed
+                            ? "failed"
+                            : isCurrentRun
+                                ? "finished"
+                                : "stopped",
+                    runtimeMs:
+                        this.lastRunRuntimeMs,
+                    memoryKb:
+                        this.lastRunMemoryKb
+                }
+            );
+
             if (
                 isCurrentRun &&
                 !runFailed
@@ -11494,6 +11661,11 @@ class Board {
             this.createHistorySnapshot()
         );
 
+        if (this.workflowMetadata) {
+            this.workflowMetadata.modifiedAt =
+                new Date().toISOString();
+        }
+
         if (
             !this.isWorkflowRunning &&
             this.hasBranchExecutionState
@@ -11560,7 +11732,8 @@ class Board {
              * content without moving the user's camera.
              */
             this.applyWorkflowData(
-                historyData
+                historyData,
+                { preserveResearch: true }
             );
         } finally {
             this.isApplyingHistory = false;
@@ -11706,7 +11879,22 @@ class Board {
 
     getWorkflowData() {
         return {
-            version: 2,
+            version: 3,
+
+            workflowMetadata:
+                this.cloneResearchValue(
+                    this.workflowMetadata
+                ),
+
+            runHistory:
+                this.cloneResearchValue(
+                    this.runHistory
+                ),
+
+            researchSnapshots:
+                this.cloneResearchValue(
+                    this.researchSnapshots
+                ),
 
             workspaceWidth:
                 this.workspaceWidth,
@@ -11774,8 +11962,11 @@ class Board {
         downloadLink.href =
             downloadUrl;
 
+        const exportBaseName =
+            this.getResearchExportBaseName();
+
         downloadLink.download =
-            "workflow.json";
+            `${exportBaseName}.json`;
 
         document.body.appendChild(
             downloadLink
@@ -11788,6 +11979,1264 @@ class Board {
         URL.revokeObjectURL(
             downloadUrl
         );
+    }
+
+    createDefaultWorkflowMetadata() {
+        const now = new Date().toISOString();
+
+        return {
+            title: "Untitled Research Workflow",
+            description: "",
+            author: "",
+            hypothesis: "",
+            dataset: "",
+            tags: [],
+            createdAt: now,
+            modifiedAt: now
+        };
+    }
+
+    normalizeWorkflowMetadata(metadata) {
+        const fallback =
+            this.createDefaultWorkflowMetadata();
+
+        if (!metadata || typeof metadata !== "object") {
+            return fallback;
+        }
+
+        const tags = Array.isArray(metadata.tags)
+            ? metadata.tags
+            : String(metadata.tags || "")
+                .split(",");
+
+        return {
+            title:
+                String(metadata.title || "").trim() ||
+                fallback.title,
+            description:
+                String(metadata.description || ""),
+            author:
+                String(metadata.author || ""),
+            hypothesis:
+                String(metadata.hypothesis || ""),
+            dataset:
+                String(metadata.dataset || ""),
+            tags: tags
+                .map((tag) => String(tag).trim())
+                .filter(Boolean),
+            createdAt:
+                metadata.createdAt || fallback.createdAt,
+            modifiedAt:
+                metadata.modifiedAt || fallback.modifiedAt
+        };
+    }
+
+    cloneResearchValue(value) {
+        try {
+            return JSON.parse(
+                JSON.stringify(value)
+            );
+        } catch (error) {
+            return value;
+        }
+    }
+
+    getResearchExportBaseName() {
+        const title =
+            String(
+                this.workflowMetadata?.title ||
+                "workflow"
+            )
+                .trim()
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "-")
+                .replace(/^-+|-+$/g, "");
+
+        return title || "workflow";
+    }
+
+    getReproducibleWorkflowData() {
+        return {
+            version: 3,
+            workflowMetadata:
+                this.cloneResearchValue(
+                    this.workflowMetadata
+                ),
+            widgets:
+                this.widgets.map(
+                    (widget) => widget.toJSON()
+                ),
+            connections:
+                this.connections.map(
+                    (connection) =>
+                        connection.toJSON()
+                )
+        };
+    }
+
+    getRunNodeRecord(widget) {
+        return {
+            id: widget.id,
+            title: widget.title,
+            type: widget.type,
+            status: widget.status,
+            runtimeMs:
+                Number(widget.runtimeMs) || 0,
+            memoryKb:
+                Number(widget.memoryKb) || 0,
+            error:
+                widget.lastError || "",
+            decisionResult:
+                widget.lastDecisionResult ?? null,
+            inputs:
+                widget.inputs.map((input) => ({
+                    id: input.id,
+                    name: input.name,
+                    dataType:
+                        input.dataType || "Any",
+                    value:
+                        this.cloneResearchValue(
+                            input.value
+                        )
+                })),
+            outputs:
+                widget.outputs.map((output) => ({
+                    id: output.id,
+                    name: output.name,
+                    dataType:
+                        output.dataType || "Any",
+                    value:
+                        this.cloneResearchValue(
+                            output.value
+                        )
+                })),
+            notes:
+                widget.researchNotes || ""
+        };
+    }
+
+    createResearchRunRecord({
+        runId,
+        plan,
+        widget,
+        report,
+        executionOrder
+    }) {
+        return {
+            id:
+                `research-run-${Date.now()}-${runId}`,
+            runNumber: runId,
+            startedAt:
+                new Date().toISOString(),
+            completedAt: null,
+            status: "running",
+            mode: plan.mode,
+            label: plan.label,
+            startWidgetId:
+                widget ? widget.id : null,
+            startWidgetTitle:
+                widget ? widget.title : "",
+            validationWarnings:
+                this.cloneResearchValue(
+                    report.warnings || []
+                ),
+            executionOrder:
+                executionOrder.map(
+                    (item) => item.id
+                ),
+            workflowSnapshot:
+                this.getReproducibleWorkflowData(),
+            nodes: [],
+            runtimeMs: 0,
+            memoryKb: 0
+        };
+    }
+
+    finalizeResearchRunRecord(
+        record,
+        executionOrder,
+        {
+            status = "finished",
+            runtimeMs = 0,
+            memoryKb = 0
+        } = {}
+    ) {
+        if (!record) {
+            return;
+        }
+
+        record.completedAt =
+            new Date().toISOString();
+        record.status = status;
+        record.runtimeMs =
+            Number(runtimeMs) || 0;
+        record.memoryKb =
+            Number(memoryKb) || 0;
+        record.nodes =
+            executionOrder.map(
+                (widget) =>
+                    this.getRunNodeRecord(widget)
+            );
+
+        this.runHistory.unshift(record);
+
+        if (
+            this.runHistory.length >
+            this.runHistoryLimit
+        ) {
+            this.runHistory.length =
+                this.runHistoryLimit;
+        }
+
+        if (this.workflowMetadata) {
+            this.workflowMetadata.modifiedAt =
+                new Date().toISOString();
+        }
+    }
+
+    formatResearchDate(value) {
+        if (!value) {
+            return "—";
+        }
+
+        const date = new Date(value);
+
+        return Number.isNaN(date.getTime())
+            ? String(value)
+            : date.toLocaleString();
+    }
+
+    formatResearchValue(value) {
+        if (
+            value === "" ||
+            value === null ||
+            value === undefined
+        ) {
+            return "<empty>";
+        }
+
+        if (typeof value === "string") {
+            return value;
+        }
+
+        try {
+            return JSON.stringify(value);
+        } catch (error) {
+            return String(value);
+        }
+    }
+
+    closeResearchPanel() {
+        if (this.activeResearchPanel) {
+            this.activeResearchPanel.remove();
+            this.activeResearchPanel = null;
+        }
+    }
+
+    showResearchPanel({
+        title,
+        subtitle = "",
+        width = "760px"
+    }) {
+        this.closeResearchPanel();
+
+        const overlay =
+            document.createElement("div");
+        overlay.className =
+            "research-panel-overlay";
+
+        const panel =
+            document.createElement("section");
+        panel.className = "research-panel";
+        panel.style.setProperty(
+            "--research-panel-width",
+            width
+        );
+        panel.setAttribute("role", "dialog");
+        panel.setAttribute(
+            "aria-modal",
+            "true"
+        );
+
+        const header =
+            document.createElement("div");
+        header.className =
+            "research-panel-header";
+
+        const headingWrap =
+            document.createElement("div");
+        const heading =
+            document.createElement("h2");
+        heading.textContent = title;
+
+        headingWrap.appendChild(heading);
+
+        if (subtitle) {
+            const sub =
+                document.createElement("p");
+            sub.textContent = subtitle;
+            headingWrap.appendChild(sub);
+        }
+
+        const closeButton =
+            document.createElement("button");
+        closeButton.type = "button";
+        closeButton.className =
+            "research-panel-close";
+        closeButton.textContent = "×";
+        closeButton.setAttribute(
+            "aria-label",
+            "Close"
+        );
+        closeButton.addEventListener(
+            "click",
+            () => this.closeResearchPanel()
+        );
+
+        header.appendChild(headingWrap);
+        header.appendChild(closeButton);
+
+        const body =
+            document.createElement("div");
+        body.className =
+            "research-panel-body";
+
+        panel.appendChild(header);
+        panel.appendChild(body);
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+
+        overlay.addEventListener(
+            "pointerdown",
+            (event) => {
+                if (event.target === overlay) {
+                    this.closeResearchPanel();
+                }
+            }
+        );
+
+        const keyHandler = (event) => {
+            if (
+                event.key === "Escape" &&
+                this.activeResearchPanel ===
+                    overlay
+            ) {
+                document.removeEventListener(
+                    "keydown",
+                    keyHandler
+                );
+                this.closeResearchPanel();
+            }
+        };
+
+        document.addEventListener(
+            "keydown",
+            keyHandler
+        );
+
+        this.activeResearchPanel = overlay;
+        closeButton.focus();
+
+        return { overlay, panel, body };
+    }
+
+    createResearchField(
+        labelText,
+        control
+    ) {
+        const field =
+            document.createElement("label");
+        field.className = "research-field";
+
+        const label =
+            document.createElement("span");
+        label.className =
+            "research-field-label";
+        label.textContent = labelText;
+
+        field.appendChild(label);
+        field.appendChild(control);
+
+        return field;
+    }
+
+    showWorkflowMetadataPanel() {
+        const { body } =
+            this.showResearchPanel({
+                title: "Workflow Details",
+                subtitle:
+                    "Describe the experiment so exported workflows and past runs remain understandable."
+            });
+
+        const form =
+            document.createElement("form");
+        form.className =
+            "research-metadata-form";
+
+        const makeInput = (value = "") => {
+            const input =
+                document.createElement("input");
+            input.type = "text";
+            input.value = value;
+            return input;
+        };
+
+        const makeTextarea = (value = "") => {
+            const textarea =
+                document.createElement("textarea");
+            textarea.rows = 3;
+            textarea.value = value;
+            return textarea;
+        };
+
+        const titleInput =
+            makeInput(
+                this.workflowMetadata.title
+            );
+        const authorInput =
+            makeInput(
+                this.workflowMetadata.author
+            );
+        const datasetInput =
+            makeInput(
+                this.workflowMetadata.dataset
+            );
+        const tagsInput =
+            makeInput(
+                this.workflowMetadata.tags
+                    .join(", ")
+            );
+        const hypothesisInput =
+            makeTextarea(
+                this.workflowMetadata.hypothesis
+            );
+        const descriptionInput =
+            makeTextarea(
+                this.workflowMetadata.description
+            );
+
+        form.appendChild(
+            this.createResearchField(
+                "Workflow name",
+                titleInput
+            )
+        );
+        form.appendChild(
+            this.createResearchField(
+                "Author",
+                authorInput
+            )
+        );
+        form.appendChild(
+            this.createResearchField(
+                "Dataset / source",
+                datasetInput
+            )
+        );
+        form.appendChild(
+            this.createResearchField(
+                "Tags",
+                tagsInput
+            )
+        );
+        form.appendChild(
+            this.createResearchField(
+                "Hypothesis",
+                hypothesisInput
+            )
+        );
+        form.appendChild(
+            this.createResearchField(
+                "Description / research goal",
+                descriptionInput
+            )
+        );
+
+        const dates =
+            document.createElement("div");
+        dates.className =
+            "research-metadata-dates";
+        dates.textContent =
+            `Created ${this.formatResearchDate(this.workflowMetadata.createdAt)} · Last updated ${this.formatResearchDate(this.workflowMetadata.modifiedAt)}`;
+        form.appendChild(dates);
+
+        const actions =
+            document.createElement("div");
+        actions.className =
+            "research-panel-actions";
+
+        const cancel =
+            document.createElement("button");
+        cancel.type = "button";
+        cancel.textContent = "Cancel";
+        cancel.addEventListener(
+            "click",
+            () => this.closeResearchPanel()
+        );
+
+        const save =
+            document.createElement("button");
+        save.type = "submit";
+        save.className = "primary";
+        save.textContent = "Save Details";
+
+        actions.appendChild(cancel);
+        actions.appendChild(save);
+        form.appendChild(actions);
+
+        form.addEventListener(
+            "submit",
+            (event) => {
+                event.preventDefault();
+
+                this.workflowMetadata =
+                    this.normalizeWorkflowMetadata({
+                        ...this.workflowMetadata,
+                        title:
+                            titleInput.value,
+                        author:
+                            authorInput.value,
+                        dataset:
+                            datasetInput.value,
+                        tags:
+                            tagsInput.value
+                                .split(",")
+                                .map((tag) =>
+                                    tag.trim()
+                                )
+                                .filter(Boolean),
+                        hypothesis:
+                            hypothesisInput.value,
+                        description:
+                            descriptionInput.value,
+                        modifiedAt:
+                            new Date()
+                                .toISOString()
+                    });
+
+                this.saveState();
+                this.closeResearchPanel();
+            }
+        );
+
+        body.appendChild(form);
+        titleInput.focus();
+    }
+
+    getResearchRunLabel(run) {
+        const number =
+            run.runNumber
+                ? `Run #${run.runNumber}`
+                : "Run";
+
+        return run.mode === "workflow"
+            ? number
+            : `${number} · ${run.label || run.mode}`;
+    }
+
+    showRunHistoryPanel() {
+        const { body } =
+            this.showResearchPanel({
+                title: "Run History",
+                subtitle:
+                    "Each completed, failed, or stopped run keeps the setup and results used for that experiment."
+            });
+
+        if (this.runHistory.length === 0) {
+            const empty =
+                document.createElement("div");
+            empty.className =
+                "research-empty-state";
+            empty.innerHTML =
+                "<strong>No recorded runs yet.</strong><span>Run the workflow once and it will appear here automatically.</span>";
+            body.appendChild(empty);
+            return;
+        }
+
+        const list =
+            document.createElement("div");
+        list.className =
+            "research-run-list";
+
+        this.runHistory.forEach((run) => {
+            const row =
+                document.createElement("article");
+            row.className =
+                "research-run-row";
+
+            const summary =
+                document.createElement("div");
+            summary.className =
+                "research-run-summary";
+
+            const title =
+                document.createElement("strong");
+            title.textContent =
+                this.getResearchRunLabel(run);
+
+            const meta =
+                document.createElement("span");
+            meta.textContent =
+                `${this.formatResearchDate(run.startedAt)} · ${Number(run.runtimeMs || 0).toFixed(1)} ms · ${Number(run.memoryKb || 0).toFixed(1)} KB`;
+
+            const status =
+                document.createElement("span");
+            status.className =
+                `research-run-status status-${run.status}`;
+            status.textContent =
+                run.status || "unknown";
+
+            summary.appendChild(title);
+            summary.appendChild(meta);
+            summary.appendChild(status);
+
+            const actions =
+                document.createElement("div");
+            actions.className =
+                "research-run-actions";
+
+            const view =
+                document.createElement("button");
+            view.type = "button";
+            view.textContent = "Details";
+            view.addEventListener("click", () => {
+                this.showRunDetailsPanel(run);
+            });
+
+            const reproduce =
+                document.createElement("button");
+            reproduce.type = "button";
+            reproduce.textContent = "Reproduce";
+            reproduce.addEventListener(
+                "click",
+                () => {
+                    this.reproduceResearchRun(run);
+                }
+            );
+
+            const remove =
+                document.createElement("button");
+            remove.type = "button";
+            remove.className = "danger-link";
+            remove.textContent = "Delete";
+            remove.addEventListener(
+                "click",
+                async () => {
+                    const confirmed =
+                        await this.showConfirmDialog({
+                            title: "Delete Run Record?",
+                            message:
+                                "This removes the saved record only. It does not change the workflow.",
+                            confirmLabel: "Delete",
+                            danger: true
+                        });
+
+                    if (!confirmed) return;
+
+                    this.runHistory =
+                        this.runHistory.filter(
+                            (item) =>
+                                item.id !== run.id
+                        );
+                    this.saveState();
+                    this.showRunHistoryPanel();
+                }
+            );
+
+            actions.appendChild(view);
+            actions.appendChild(reproduce);
+            actions.appendChild(remove);
+
+            row.appendChild(summary);
+            row.appendChild(actions);
+            list.appendChild(row);
+        });
+
+        body.appendChild(list);
+    }
+
+    showRunDetailsPanel(run) {
+        const { body } =
+            this.showResearchPanel({
+                title:
+                    this.getResearchRunLabel(run),
+                subtitle:
+                    `Recorded ${this.formatResearchDate(run.startedAt)}`,
+                width: "860px"
+            });
+
+        const metrics =
+            document.createElement("div");
+        metrics.className =
+            "research-metric-grid";
+
+        [
+            ["Status", run.status],
+            [
+                "Runtime",
+                `${Number(run.runtimeMs || 0).toFixed(1)} ms`
+            ],
+            [
+                "Memory",
+                `${Number(run.memoryKb || 0).toFixed(1)} KB`
+            ],
+            [
+                "Nodes",
+                String(run.nodes?.length || 0)
+            ]
+        ].forEach(([label, value]) => {
+            const item =
+                document.createElement("div");
+            item.className =
+                "research-metric";
+            item.innerHTML =
+                `<span>${label}</span><strong></strong>`;
+            item.querySelector("strong")
+                .textContent = value;
+            metrics.appendChild(item);
+        });
+
+        body.appendChild(metrics);
+
+        const tableWrap =
+            document.createElement("div");
+        tableWrap.className =
+            "research-table-wrap";
+        const table =
+            document.createElement("table");
+        table.className =
+            "research-table";
+        table.innerHTML =
+            "<thead><tr><th>Node</th><th>Status</th><th>Inputs</th><th>Outputs</th><th>Runtime</th></tr></thead>";
+        const tbody =
+            document.createElement("tbody");
+
+        (run.nodes || []).forEach((node) => {
+            const row =
+                document.createElement("tr");
+            const inputs =
+                (node.inputs || [])
+                    .map(
+                        (input) =>
+                            `${input.name}: ${this.formatResearchValue(input.value)}`
+                    )
+                    .join(" · ") || "—";
+            const outputs =
+                (node.outputs || [])
+                    .map(
+                        (output) =>
+                            `${output.name}: ${this.formatResearchValue(output.value)}`
+                    )
+                    .join(" · ") || "—";
+
+            [
+                node.title,
+                node.status,
+                inputs,
+                outputs,
+                `${Number(node.runtimeMs || 0).toFixed(1)} ms`
+            ].forEach((value) => {
+                const cell =
+                    document.createElement("td");
+                cell.textContent = value;
+                row.appendChild(cell);
+            });
+
+            tbody.appendChild(row);
+        });
+
+        table.appendChild(tbody);
+        tableWrap.appendChild(table);
+        body.appendChild(tableWrap);
+
+        const actions =
+            document.createElement("div");
+        actions.className =
+            "research-panel-actions";
+
+        const back =
+            document.createElement("button");
+        back.type = "button";
+        back.textContent = "Back to History";
+        back.addEventListener("click", () => {
+            this.showRunHistoryPanel();
+        });
+
+        const reproduce =
+            document.createElement("button");
+        reproduce.type = "button";
+        reproduce.className = "primary";
+        reproduce.textContent =
+            "Reproduce This Run";
+        reproduce.addEventListener(
+            "click",
+            () => this.reproduceResearchRun(run)
+        );
+
+        actions.appendChild(back);
+        actions.appendChild(reproduce);
+        body.appendChild(actions);
+    }
+
+    async reproduceResearchRun(run) {
+        if (!run?.workflowSnapshot) {
+            return;
+        }
+
+        const confirmed =
+            await this.showConfirmDialog({
+                title: "Reproduce This Run?",
+                message:
+                    "The canvas will be restored to the exact saved setup for this run, then the same execution mode will run again. Your run history and named snapshots will stay intact.",
+                confirmLabel: "Restore & Run"
+            });
+
+        if (!confirmed) {
+            return;
+        }
+
+        this.closeResearchPanel();
+        this.recordHistoryState();
+
+        const preservedHistory =
+            this.runHistory;
+        const preservedSnapshots =
+            this.researchSnapshots;
+
+        this.applyWorkflowData(
+            {
+                ...this.cloneResearchValue(
+                    run.workflowSnapshot
+                ),
+                zoom: this.zoom,
+                panX: this.panX,
+                panY: this.panY,
+                leftPanelWidth:
+                    this.leftPanelWidth,
+                rightPanelWidth:
+                    this.rightPanelWidth
+            },
+            { preserveResearch: true }
+        );
+
+        this.runHistory =
+            preservedHistory;
+        this.researchSnapshots =
+            preservedSnapshots;
+
+        if (run.workflowSnapshot.workflowMetadata) {
+            this.workflowMetadata =
+                this.normalizeWorkflowMetadata(
+                    run.workflowSnapshot
+                        .workflowMetadata
+                );
+        }
+
+        this.saveState();
+
+        let targetWidget = null;
+        if (run.startWidgetId) {
+            targetWidget =
+                this.widgets.find(
+                    (item) =>
+                        item.id ===
+                        run.startWidgetId
+                ) || null;
+        }
+
+        await this.runWorkflow({
+            mode: run.mode || "workflow",
+            widget: targetWidget
+        });
+    }
+
+    showRunComparisonPanel() {
+        const { body } =
+            this.showResearchPanel({
+                title: "Compare Runs",
+                subtitle:
+                    "Compare outcomes and performance without changing the current canvas.",
+                width: "900px"
+            });
+
+        if (this.runHistory.length < 2) {
+            const empty =
+                document.createElement("div");
+            empty.className =
+                "research-empty-state";
+            empty.innerHTML =
+                "<strong>Two runs are needed.</strong><span>Run the experiment at least twice, then compare the results here.</span>";
+            body.appendChild(empty);
+            return;
+        }
+
+        const controls =
+            document.createElement("div");
+        controls.className =
+            "research-compare-controls";
+
+        const createSelect = () => {
+            const select =
+                document.createElement("select");
+            this.runHistory.forEach((run) => {
+                const option =
+                    document.createElement("option");
+                option.value = run.id;
+                option.textContent =
+                    `${this.getResearchRunLabel(run)} · ${this.formatResearchDate(run.startedAt)}`;
+                select.appendChild(option);
+            });
+            return select;
+        };
+
+        const leftSelect = createSelect();
+        const rightSelect = createSelect();
+        rightSelect.selectedIndex = 1;
+
+        controls.appendChild(
+            this.createResearchField(
+                "Run A",
+                leftSelect
+            )
+        );
+        controls.appendChild(
+            this.createResearchField(
+                "Run B",
+                rightSelect
+            )
+        );
+
+        const comparison =
+            document.createElement("div");
+        comparison.className =
+            "research-comparison";
+
+        const render = () => {
+            comparison.innerHTML = "";
+
+            const runA =
+                this.runHistory.find(
+                    (run) =>
+                        run.id ===
+                        leftSelect.value
+                );
+            const runB =
+                this.runHistory.find(
+                    (run) =>
+                        run.id ===
+                        rightSelect.value
+                );
+
+            if (!runA || !runB) return;
+
+            const summaryTable =
+                document.createElement("table");
+            summaryTable.className =
+                "research-table research-compare-summary";
+            summaryTable.innerHTML =
+                "<thead><tr><th>Metric</th><th>Run A</th><th>Run B</th></tr></thead>";
+            const tbody =
+                document.createElement("tbody");
+
+            [
+                ["Status", runA.status, runB.status],
+                [
+                    "Runtime",
+                    `${Number(runA.runtimeMs || 0).toFixed(1)} ms`,
+                    `${Number(runB.runtimeMs || 0).toFixed(1)} ms`
+                ],
+                [
+                    "Memory",
+                    `${Number(runA.memoryKb || 0).toFixed(1)} KB`,
+                    `${Number(runB.memoryKb || 0).toFixed(1)} KB`
+                ]
+            ].forEach((values) => {
+                const row =
+                    document.createElement("tr");
+                values.forEach((value) => {
+                    const cell =
+                        document.createElement("td");
+                    cell.textContent = value;
+                    row.appendChild(cell);
+                });
+                tbody.appendChild(row);
+            });
+
+            summaryTable.appendChild(tbody);
+            comparison.appendChild(summaryTable);
+
+            const nodeMapB = new Map(
+                (runB.nodes || []).map(
+                    (node) => [node.id, node]
+                )
+            );
+            const nodeTable =
+                document.createElement("table");
+            nodeTable.className =
+                "research-table research-node-compare";
+            nodeTable.innerHTML =
+                "<thead><tr><th>Node</th><th>Run A outputs</th><th>Run B outputs</th></tr></thead>";
+            const nodeBody =
+                document.createElement("tbody");
+
+            (runA.nodes || []).forEach((nodeA) => {
+                const nodeB =
+                    nodeMapB.get(nodeA.id);
+                if (!nodeB) return;
+
+                const outputText = (node) =>
+                    (node.outputs || [])
+                        .map(
+                            (output) =>
+                                `${output.name}: ${this.formatResearchValue(output.value)}`
+                        )
+                        .join(" · ") || "—";
+
+                const row =
+                    document.createElement("tr");
+                [
+                    nodeA.title,
+                    outputText(nodeA),
+                    outputText(nodeB)
+                ].forEach((value) => {
+                    const cell =
+                        document.createElement("td");
+                    cell.textContent = value;
+                    row.appendChild(cell);
+                });
+                nodeBody.appendChild(row);
+            });
+
+            nodeTable.appendChild(nodeBody);
+            comparison.appendChild(nodeTable);
+        };
+
+        leftSelect.addEventListener(
+            "change",
+            render
+        );
+        rightSelect.addEventListener(
+            "change",
+            render
+        );
+
+        body.appendChild(controls);
+        body.appendChild(comparison);
+        render();
+    }
+
+    async saveNamedResearchSnapshot() {
+        const defaultName =
+            `Snapshot ${this.researchSnapshots.length + 1}`;
+
+        const name =
+            await this.showPromptDialog({
+                title: "Save Snapshot",
+                message:
+                    "Give this checkpoint a short name so you can return to it later.",
+                value: defaultName,
+                placeholder:
+                    "e.g. Baseline before normalization",
+                confirmLabel: "Save Snapshot"
+            });
+
+        if (!name || !String(name).trim()) {
+            return;
+        }
+
+        const snapshot = {
+            id:
+                `research-snapshot-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            name: String(name).trim(),
+            createdAt:
+                new Date().toISOString(),
+            workflowData:
+                this.getReproducibleWorkflowData()
+        };
+
+        this.researchSnapshots.unshift(
+            snapshot
+        );
+
+        if (
+            this.researchSnapshots.length >
+            this.researchSnapshotLimit
+        ) {
+            this.researchSnapshots.length =
+                this.researchSnapshotLimit;
+        }
+
+        this.saveState();
+        this.showResearchSnapshotsPanel();
+    }
+
+    showResearchSnapshotsPanel() {
+        const { body } =
+            this.showResearchPanel({
+                title: "Snapshots",
+                subtitle:
+                    "Save named checkpoints before major changes. Snapshots do not replace Undo/Redo."
+            });
+
+        const topActions =
+            document.createElement("div");
+        topActions.className =
+            "research-panel-actions research-panel-actions-top";
+
+        const create =
+            document.createElement("button");
+        create.type = "button";
+        create.className = "primary";
+        create.textContent = "Save Current Snapshot";
+        create.addEventListener(
+            "click",
+            () => this.saveNamedResearchSnapshot()
+        );
+        topActions.appendChild(create);
+        body.appendChild(topActions);
+
+        if (this.researchSnapshots.length === 0) {
+            const empty =
+                document.createElement("div");
+            empty.className =
+                "research-empty-state";
+            empty.innerHTML =
+                "<strong>No snapshots yet.</strong><span>Create one before a major experiment change or refactor.</span>";
+            body.appendChild(empty);
+            return;
+        }
+
+        const list =
+            document.createElement("div");
+        list.className =
+            "research-run-list";
+
+        this.researchSnapshots.forEach(
+            (snapshot) => {
+                const row =
+                    document.createElement("article");
+                row.className =
+                    "research-run-row";
+
+                const summary =
+                    document.createElement("div");
+                summary.className =
+                    "research-run-summary";
+                const name =
+                    document.createElement("strong");
+                name.textContent = snapshot.name;
+                const date =
+                    document.createElement("span");
+                date.textContent =
+                    this.formatResearchDate(
+                        snapshot.createdAt
+                    );
+                summary.appendChild(name);
+                summary.appendChild(date);
+
+                const actions =
+                    document.createElement("div");
+                actions.className =
+                    "research-run-actions";
+
+                const restore =
+                    document.createElement("button");
+                restore.type = "button";
+                restore.textContent = "Restore";
+                restore.addEventListener(
+                    "click",
+                    () =>
+                        this.restoreResearchSnapshot(
+                            snapshot
+                        )
+                );
+
+                const remove =
+                    document.createElement("button");
+                remove.type = "button";
+                remove.className = "danger-link";
+                remove.textContent = "Delete";
+                remove.addEventListener(
+                    "click",
+                    async () => {
+                        const confirmed =
+                            await this.showConfirmDialog({
+                                title: "Delete Snapshot?",
+                                message:
+                                    `Delete “${snapshot.name}”?`,
+                                confirmLabel: "Delete",
+                                danger: true
+                            });
+                        if (!confirmed) return;
+
+                        this.researchSnapshots =
+                            this.researchSnapshots.filter(
+                                (item) =>
+                                    item.id !==
+                                    snapshot.id
+                            );
+                        this.saveState();
+                        this.showResearchSnapshotsPanel();
+                    }
+                );
+
+                actions.appendChild(restore);
+                actions.appendChild(remove);
+                row.appendChild(summary);
+                row.appendChild(actions);
+                list.appendChild(row);
+            }
+        );
+
+        body.appendChild(list);
+    }
+
+    async restoreResearchSnapshot(snapshot) {
+        if (!snapshot?.workflowData) {
+            return;
+        }
+
+        const confirmed =
+            await this.showConfirmDialog({
+                title: "Restore Snapshot?",
+                message:
+                    `Restore “${snapshot.name}”? The current canvas will be replaced, but Undo and your research records remain available.`,
+                confirmLabel: "Restore"
+            });
+
+        if (!confirmed) return;
+
+        this.closeResearchPanel();
+        this.recordHistoryState();
+
+        this.applyWorkflowData(
+            {
+                ...this.cloneResearchValue(
+                    snapshot.workflowData
+                ),
+                zoom: this.zoom,
+                panX: this.panX,
+                panY: this.panY,
+                leftPanelWidth:
+                    this.leftPanelWidth,
+                rightPanelWidth:
+                    this.rightPanelWidth
+            },
+            { preserveResearch: true }
+        );
+
+        if (
+            snapshot.workflowData
+                .workflowMetadata
+        ) {
+            this.workflowMetadata =
+                this.normalizeWorkflowMetadata(
+                    snapshot.workflowData
+                        .workflowMetadata
+                );
+        }
+
+        this.saveState();
     }
 
     hideContextMenu() {
