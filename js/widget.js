@@ -11,9 +11,14 @@ class Widget {
         this.zIndex = null;
 
         this.element = null;
+        this.headerElement = null;
         this.titleElement = null;
         this.contentElement = null;
         this.statusElement = null;
+        this.statusIndicatorElement = null;
+        this.noteIndicatorElement = null;
+        this.errorIndicatorElement = null;
+        this.collapseButtonElement = null;
 
         this.inputPortElements = new Map();
         this.outputPortElements = new Map();
@@ -35,7 +40,15 @@ class Widget {
                 ? "idle"
                 : "waiting";
 
+        /*
+         * Widget chrome stays intentionally compact. Status is shown
+         * as an accessible header indicator instead of a full-width
+         * footer, and widgets can be collapsed without losing ports.
+         */
         this.showStatus = true;
+        this.collapsed = false;
+        this.notes = "";
+
         this.runtimeMs = 0;
         this.memoryKb = 0;
         this.lastError = "";
@@ -319,6 +332,19 @@ class Widget {
                 data.showStatus;
         }
 
+        if (
+            typeof data.collapsed ===
+            "boolean"
+        ) {
+            this.collapsed =
+                data.collapsed;
+        }
+
+        if (data.notes !== undefined) {
+            this.notes =
+                String(data.notes || "");
+        }
+
         if (data.status) {
             this.status =
                 String(data.status);
@@ -452,11 +478,104 @@ class Widget {
         element.className = "widget";
         element.dataset.widgetId = this.id;
 
-        const titleElement =
+        const headerElement =
             document.createElement("div");
 
-        titleElement.className =
+        headerElement.className =
             "widget-title";
+
+        const titleElement =
+            document.createElement("span");
+
+        titleElement.className =
+            "widget-title-text";
+
+        const headerActions =
+            document.createElement("div");
+
+        headerActions.className =
+            "widget-header-actions";
+
+        const noteIndicator =
+            document.createElement("span");
+
+        noteIndicator.className =
+            "widget-header-indicator widget-note-indicator";
+        noteIndicator.textContent = "✎";
+        noteIndicator.title = "This widget has research notes";
+        noteIndicator.setAttribute(
+            "aria-label",
+            "Research notes are attached"
+        );
+
+        const errorIndicator =
+            document.createElement("span");
+
+        errorIndicator.className =
+            "widget-header-indicator widget-error-indicator";
+        errorIndicator.textContent = "!";
+        errorIndicator.setAttribute(
+            "aria-label",
+            "Widget error"
+        );
+
+        const statusIndicator =
+            document.createElement("span");
+
+        statusIndicator.className =
+            "widget-status-indicator";
+        statusIndicator.tabIndex = 0;
+        statusIndicator.setAttribute(
+            "role",
+            "img"
+        );
+
+        const collapseButton =
+            document.createElement("button");
+
+        collapseButton.type = "button";
+        collapseButton.className =
+            "widget-collapse-button";
+
+        [
+            collapseButton
+        ].forEach((control) => {
+            control.addEventListener(
+                "pointerdown",
+                (event) => {
+                    event.stopPropagation();
+                }
+            );
+        });
+
+        collapseButton.addEventListener(
+            "click",
+            (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.toggleCollapsed();
+            }
+        );
+
+        headerActions.appendChild(
+            noteIndicator
+        );
+        headerActions.appendChild(
+            errorIndicator
+        );
+        headerActions.appendChild(
+            statusIndicator
+        );
+        headerActions.appendChild(
+            collapseButton
+        );
+
+        headerElement.appendChild(
+            titleElement
+        );
+        headerElement.appendChild(
+            headerActions
+        );
 
         const contentElement =
             document.createElement("div");
@@ -464,14 +583,22 @@ class Widget {
         contentElement.className =
             "widget-content widget-io-content";
 
+        /*
+         * Kept for screen readers and live status announcements.
+         * Visual status is represented by the compact header indicator.
+         */
         const statusElement =
             document.createElement("div");
 
         statusElement.className =
-            "widget-status";
+            "widget-status widget-status-sr";
+        statusElement.setAttribute(
+            "aria-live",
+            "polite"
+        );
 
         element.appendChild(
-            titleElement
+            headerElement
         );
 
         element.appendChild(
@@ -483,9 +610,14 @@ class Widget {
         );
 
         this.element = element;
+        this.headerElement = headerElement;
         this.titleElement = titleElement;
         this.contentElement = contentElement;
         this.statusElement = statusElement;
+        this.statusIndicatorElement = statusIndicator;
+        this.noteIndicatorElement = noteIndicator;
+        this.errorIndicatorElement = errorIndicator;
+        this.collapseButtonElement = collapseButton;
 
         this.refreshContent();
         this.updatePosition();
@@ -506,6 +638,35 @@ class Widget {
 
         this.element.dataset.widgetType =
             this.type;
+
+        this.element.classList.toggle(
+            "collapsed",
+            this.collapsed
+        );
+
+        if (this.collapseButtonElement) {
+            this.collapseButtonElement.textContent =
+                this.collapsed ? "▾" : "▴";
+            this.collapseButtonElement.title =
+                this.collapsed
+                    ? "Expand widget"
+                    : "Collapse widget";
+            this.collapseButtonElement.setAttribute(
+                "aria-label",
+                this.collapsed
+                    ? `Expand ${this.title}`
+                    : `Collapse ${this.title}`
+            );
+            this.collapseButtonElement.setAttribute(
+                "aria-expanded",
+                String(!this.collapsed)
+            );
+        }
+
+        if (this.noteIndicatorElement) {
+            this.noteIndicatorElement.hidden =
+                this.notes.trim() === "";
+        }
 
         if (
             this.type === "Decision" &&
@@ -649,8 +810,32 @@ class Widget {
                         ? "In"
                         : "Out";
 
-                text.textContent =
-                    `${prefix} ${port.name} [${Widget.normalizeDataType(port.dataType)}]: ${Widget.formatValue(port.value)}`;
+                const normalizedType =
+                    Widget.normalizeDataType(
+                        port.dataType
+                    );
+
+                const hasValue =
+                    !(
+                        port.value === "" ||
+                        port.value === null ||
+                        port.value === undefined
+                    );
+
+                let rowText =
+                    `${prefix} ${port.name}`;
+
+                if (normalizedType !== "Any") {
+                    rowText +=
+                        ` · ${normalizedType}`;
+                }
+
+                if (hasValue) {
+                    rowText +=
+                        `: ${Widget.formatValue(port.value)}`;
+                }
+
+                text.textContent = rowText;
 
                 const portButton =
                     document.createElement(
@@ -812,10 +997,6 @@ class Widget {
     }
 
     updateStatusDisplay() {
-        if (!this.statusElement) {
-            return;
-        }
-
         const allowedStatuses = [
             "idle",
             "waiting",
@@ -826,14 +1007,6 @@ class Widget {
             "skipped"
         ];
 
-        allowedStatuses.forEach(
-            (status) => {
-                this.statusElement.classList.remove(
-                    `status-${status}`
-                );
-            }
-        );
-
         const normalizedStatus =
             allowedStatuses.includes(
                 this.status
@@ -841,42 +1014,164 @@ class Widget {
                 ? this.status
                 : "idle";
 
-        this.statusElement.classList.add(
-            `status-${normalizedStatus}`
-        );
-
         if (this.element) {
             this.element.dataset.status =
                 normalizedStatus;
         }
 
-        this.statusElement.hidden =
-            !this.showStatus;
+        const labels = {
+            idle: "Idle",
+            waiting: "Waiting",
+            running: "Running",
+            finished: "Finished",
+            error: "Failed",
+            stopped: "Stopped",
+            skipped: "Skipped"
+        };
 
-        let text =
-            `status: ${normalizedStatus}` +
-            `  ·  ${Math.round(this.runtimeMs)} ms` +
-            `  ·  ${this.memoryKb.toFixed(1)} KB`;
+        const symbols = {
+            idle: "",
+            waiting: "",
+            running: "▶",
+            finished: "✓",
+            error: "×",
+            stopped: "■",
+            skipped: "–"
+        };
 
-        if (
-            this.type === "Decision" &&
-            typeof this.lastDecisionResult ===
-                "boolean"
-        ) {
-            text +=
-                `  ·  branch: ${this.lastDecisionResult ? "TRUE" : "FALSE"}`;
+        if (this.statusIndicatorElement) {
+            allowedStatuses.forEach(
+                (status) => {
+                    this.statusIndicatorElement
+                        .classList.remove(
+                            `status-${status}`
+                        );
+                }
+            );
+
+            this.statusIndicatorElement
+                .classList.add(
+                    `status-${normalizedStatus}`
+                );
+
+            this.statusIndicatorElement.textContent =
+                symbols[normalizedStatus];
+            this.statusIndicatorElement.hidden =
+                !this.showStatus;
+
+            let tooltip =
+                `Status: ${labels[normalizedStatus]}` +
+                ` · ${Math.round(this.runtimeMs)} ms` +
+                ` · ${this.memoryKb.toFixed(1)} KB`;
+
+            if (
+                this.type === "Decision" &&
+                typeof this.lastDecisionResult ===
+                    "boolean"
+            ) {
+                tooltip +=
+                    ` · Branch: ${this.lastDecisionResult ? "TRUE" : "FALSE"}`;
+            }
+
+            if (
+                normalizedStatus === "error" &&
+                this.lastError
+            ) {
+                tooltip +=
+                    ` · ${this.lastError}`;
+            }
+
+            this.statusIndicatorElement.title =
+                tooltip;
+            this.statusIndicatorElement.setAttribute(
+                "aria-label",
+                tooltip
+            );
+        }
+
+        if (this.errorIndicatorElement) {
+            this.errorIndicatorElement.hidden =
+                !(
+                    normalizedStatus === "error" &&
+                    this.lastError
+                );
+
+            this.errorIndicatorElement.title =
+                this.lastError
+                    ? `Error: ${this.lastError}`
+                    : "Widget error";
+        }
+
+        if (this.statusElement) {
+            let text =
+                `Status: ${labels[normalizedStatus]}. ` +
+                `Runtime ${Math.round(this.runtimeMs)} milliseconds. ` +
+                `Memory ${this.memoryKb.toFixed(1)} kilobytes.`;
+
+            if (
+                this.type === "Decision" &&
+                typeof this.lastDecisionResult ===
+                    "boolean"
+            ) {
+                text +=
+                    ` Branch ${this.lastDecisionResult ? "true" : "false"}.`;
+            }
+
+            if (
+                normalizedStatus === "error" &&
+                this.lastError
+            ) {
+                text +=
+                    ` Error: ${this.lastError}`;
+            }
+
+            this.statusElement.textContent = text;
+            this.statusElement.hidden =
+                !this.showStatus;
+        }
+    }
+
+    setCollapsed(isCollapsed) {
+        this.collapsed =
+            Boolean(isCollapsed);
+
+        if (this.element) {
+            this.element.classList.toggle(
+                "collapsed",
+                this.collapsed
+            );
+        }
+
+        if (this.collapseButtonElement) {
+            this.collapseButtonElement.textContent =
+                this.collapsed ? "▾" : "▴";
+            this.collapseButtonElement.title =
+                this.collapsed
+                    ? "Expand widget"
+                    : "Collapse widget";
+            this.collapseButtonElement.setAttribute(
+                "aria-expanded",
+                String(!this.collapsed)
+            );
         }
 
         if (
-            normalizedStatus === "error" &&
-            this.lastError
+            this.board &&
+            this.element &&
+            this.element.isConnected
         ) {
-            text +=
-                `  ·  ${this.lastError}`;
+            this.board.updateConnectionsForWidget(
+                this
+            );
+            this.board.updateWorkflowMap();
+            this.board.scheduleSave();
         }
+    }
 
-        this.statusElement.textContent =
-            text;
+    toggleCollapsed() {
+        this.setCollapsed(
+            !this.collapsed
+        );
     }
 
     addInput(name = null) {
@@ -1768,6 +2063,12 @@ class Widget {
 
             showStatus:
                 this.showStatus,
+
+            collapsed:
+                this.collapsed,
+
+            notes:
+                this.notes,
 
             status:
                 this.status,

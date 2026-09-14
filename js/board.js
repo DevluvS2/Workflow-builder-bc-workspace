@@ -33,7 +33,7 @@ class Board {
 
         /* Guided interface tutorial. */
         this.tutorialStorageKey =
-            "workflowBuilderInterfaceTutorialSeenV1";
+            "workflowBuilderInterfaceTutorialSeenV2";
         this.tutorialActive = false;
         this.tutorialStepIndex = 0;
         this.tutorialSteps = [];
@@ -44,6 +44,17 @@ class Board {
         this.tutorialPreviousUiState = null;
         this.tutorialSectionId = "full";
         this.tutorialSectionLabel = "Full Tutorial";
+
+        /*
+         * Progressive-disclosure state for the Properties panel.
+         * These are UI preferences only; workflow data remains unchanged.
+         */
+        this.propertyGroupState = {
+            basic: false,
+            io: false,
+            execution: true,
+            advanced: true
+        };
 
         this.leftPanelVisible = true;
         this.rightPanelVisible = true;
@@ -3250,6 +3261,155 @@ class Board {
         };
     }
 
+    createPropertyGroup(
+        key,
+        title,
+        description = "",
+        defaultCollapsed = false
+    ) {
+        const section =
+            document.createElement("section");
+
+        section.className =
+            "property-group";
+        section.dataset.propertyGroup = key;
+
+        const header =
+            document.createElement("button");
+
+        header.type = "button";
+        header.className =
+            "property-group-toggle";
+
+        const titleText =
+            document.createElement("span");
+        titleText.className =
+            "property-group-title";
+        titleText.textContent = title;
+
+        const chevron =
+            document.createElement("span");
+        chevron.className =
+            "property-group-chevron";
+
+        header.appendChild(titleText);
+        header.appendChild(chevron);
+
+        const body =
+            document.createElement("div");
+        body.className =
+            "property-group-body";
+
+        if (description) {
+            const text =
+                document.createElement("p");
+            text.className =
+                "property-group-description";
+            text.textContent = description;
+            body.appendChild(text);
+        }
+
+        section.appendChild(header);
+        section.appendChild(body);
+
+        const storedState =
+            this.propertyGroupState[key];
+
+        const initialCollapsed =
+            typeof storedState === "boolean"
+                ? storedState
+                : defaultCollapsed;
+
+        const applyState =
+            (collapsed) => {
+                this.propertyGroupState[key] =
+                    collapsed;
+                section.classList.toggle(
+                    "collapsed",
+                    collapsed
+                );
+                body.hidden = collapsed;
+                header.setAttribute(
+                    "aria-expanded",
+                    String(!collapsed)
+                );
+                chevron.textContent =
+                    collapsed ? "›" : "⌄";
+            };
+
+        header.addEventListener(
+            "click",
+            () => {
+                applyState(
+                    !section.classList.contains(
+                        "collapsed"
+                    )
+                );
+            }
+        );
+
+        applyState(initialCollapsed);
+
+        return {
+            section,
+            body,
+            setCollapsed: applyState
+        };
+    }
+
+    expandPropertyGroupForElement(element) {
+        const group =
+            element &&
+            element.closest
+                ? element.closest(
+                    ".property-group"
+                )
+                : null;
+
+        if (!group) {
+            return;
+        }
+
+        const key =
+            group.dataset.propertyGroup;
+
+        if (key) {
+            this.propertyGroupState[key] =
+                false;
+        }
+
+        group.classList.remove(
+            "collapsed"
+        );
+
+        const body =
+            group.querySelector(
+                ":scope > .property-group-body"
+            );
+        if (body) {
+            body.hidden = false;
+        }
+
+        const toggle =
+            group.querySelector(
+                ":scope > .property-group-toggle"
+            );
+        if (toggle) {
+            toggle.setAttribute(
+                "aria-expanded",
+                "true"
+            );
+        }
+
+        const chevron =
+            group.querySelector(
+                ":scope > .property-group-toggle .property-group-chevron"
+            );
+        if (chevron) {
+            chevron.textContent = "⌄";
+        }
+    }
+
     getPortDataType(port) {
         return Widget.normalizeDataType(
             port && port.dataType
@@ -3970,6 +4130,8 @@ class Board {
         }
 
         this.propertiesPanelContent.innerHTML = "";
+
+        let decisionSection = null;
 
         /* =============================
          * General
@@ -5018,7 +5180,7 @@ class Board {
                 true
             );
 
-            const decisionSection =
+            decisionSection =
                 this.createPropertiesSection(
                     "Decision Branching",
                     "Evaluate a Boolean condition and activate exactly one output branch. Downstream nodes on the other branch are skipped automatically."
@@ -5607,7 +5769,7 @@ class Board {
         );
         showStatusLabel.appendChild(
             document.createTextNode(
-                " Show status label on widget"
+                " Show status indicator on widget"
             )
         );
 
@@ -5684,13 +5846,71 @@ class Board {
         }
 
         statusSection.body.appendChild(
-            showStatusLabel
-        );
-        statusSection.body.appendChild(
             metricsGrid
         );
         this.propertiesPanelContent.appendChild(
             statusSection.section
+        );
+
+        /* =============================
+         * Display + notes (advanced)
+         * ============================= */
+        const advancedSection =
+            this.createPropertiesSection(
+                "Display & Notes",
+                "Optional presentation and research-note settings."
+            );
+        advancedSection.section.dataset.tour =
+            "properties-advanced";
+
+        const notesRow =
+            document.createElement("div");
+        notesRow.className =
+            "property-row";
+
+        const notesLabel =
+            document.createElement("label");
+        notesLabel.textContent =
+            "Research notes";
+
+        const notesInput =
+            document.createElement("textarea");
+        notesInput.rows = 3;
+        notesInput.placeholder =
+            "Optional assumptions, context, or reminders";
+        notesInput.value =
+            widget.notes || "";
+
+        notesInput.addEventListener(
+            "change",
+            () => {
+                if (
+                    notesInput.value ===
+                    widget.notes
+                ) {
+                    return;
+                }
+
+                this.recordHistoryState();
+                widget.notes =
+                    notesInput.value;
+                widget.refreshContent();
+                this.scheduleSave();
+            }
+        );
+
+        notesRow.appendChild(notesLabel);
+        notesRow.appendChild(notesInput);
+
+        advancedSection.body.appendChild(
+            showStatusLabel
+        );
+        advancedSection.body.appendChild(
+            notesRow
+        );
+
+        this.propertiesPanelContent.appendChild(
+            advancedSection.section
         );
 
 
@@ -5783,6 +6003,81 @@ class Board {
         actions.appendChild(deleteButton);
         this.propertiesPanelContent.appendChild(
             actions
+        );
+
+        /*
+         * Progressive disclosure: keep the common setup visible and put
+         * execution/advanced controls one click deeper. Existing section
+         * elements are moved into these groups, so their event listeners
+         * and tutorial targets remain intact.
+         */
+        const basicGroup =
+            this.createPropertyGroup(
+                "basic",
+                "Basic",
+                "Name and identify this widget.",
+                false
+            );
+
+        const ioGroup =
+            this.createPropertyGroup(
+                "io",
+                "Inputs & Outputs",
+                "Connect data and configure values.",
+                false
+            );
+
+        const executionGroup =
+            this.createPropertyGroup(
+                "execution",
+                "Execution",
+                "Scripts, decisions, run state, and performance.",
+                true
+            );
+
+        const advancedGroup =
+            this.createPropertyGroup(
+                "advanced",
+                "Advanced",
+                "Optional display and research-note settings.",
+                true
+            );
+
+        basicGroup.body.appendChild(
+            general.section
+        );
+
+        ioGroup.body.appendChild(
+            inputsSection.section
+        );
+        ioGroup.body.appendChild(
+            outputsSection.section
+        );
+
+        if (decisionSection) {
+            executionGroup.body.appendChild(
+                decisionSection.section
+            );
+        }
+        executionGroup.body.appendChild(
+            scriptSection.section
+        );
+        executionGroup.body.appendChild(
+            statusSection.section
+        );
+        executionGroup.body.appendChild(
+            actions
+        );
+
+        advancedGroup.body.appendChild(
+            advancedSection.section
+        );
+
+        this.propertiesPanelContent.replaceChildren(
+            basicGroup.section,
+            ioGroup.section,
+            executionGroup.section,
+            advancedGroup.section
         );
     }
 
@@ -7513,6 +7808,12 @@ class Board {
                 )
                 : null;
 
+            if (element) {
+                this.expandPropertyGroupForElement(
+                    element
+                );
+            }
+
             element?.scrollIntoView({
                 block: "center",
                 behavior: "auto"
@@ -7596,7 +7897,21 @@ class Board {
                         ) || this.widgets[0];
                     if (widget) this.selectWidget(widget);
                 },
-                text: "Inputs are on the left and outputs are on the right. Widgets also show values and status."
+                text: "Inputs are on the left and outputs are on the right. Empty/default values stay visually quiet so the flow is easy to scan."
+            },
+            {
+                sections: ["widgets"],
+                title: "Status and collapse",
+                target: ".widget",
+                prepare: () => {
+                    this.clearTutorialPreparation();
+                    const widget =
+                        this.widgets.find(
+                            (item) => item.type === "Process"
+                        ) || this.widgets[0];
+                    if (widget) this.selectWidget(widget);
+                },
+                text: "The small header dot shows status. Hover or focus it for details. Use the chevron to collapse a widget while keeping its ports available."
             },
             {
                 sections: ["widgets", "io", "decisions"],
@@ -7621,11 +7936,11 @@ class Board {
                 title: "Properties panel",
                 target: '[data-tour="right-panel"]',
                 prepare: showProps(),
-                text: "Select a widget to edit it here. Select a connection to see exactly which ports it joins."
+                text: "Select a widget to edit it here. Basic and Inputs & Outputs stay open; Execution and Advanced stay tucked away until you need them."
             },
             {
                 sections: ["properties"],
-                title: "General",
+                title: "Basic properties",
                 target: '[data-tour="properties-general"]',
                 prepare: showProps("properties-general"),
                 text: "Change the widget title and type here. Position shows where the widget sits on the canvas."
@@ -7682,10 +7997,17 @@ class Board {
 
                     if (decision) {
                         this.selectWidget(decision);
-                        document
-                            .querySelector(
+
+                        const decisionProperties =
+                            document.querySelector(
                                 '[data-tour="properties-decision"]'
-                            )
+                            );
+
+                        this.expandPropertyGroupForElement(
+                            decisionProperties
+                        );
+
+                        decisionProperties
                             ?.scrollIntoView({
                                 block: "center",
                                 behavior: "auto"
@@ -7699,7 +8021,7 @@ class Board {
                 title: "Status & Performance",
                 target: '[data-tour="properties-status"]',
                 prepare: showProps("properties-status"),
-                text: "See whether a node is idle, running, finished, skipped, stopped, or in error. Runtime and memory appear here too."
+                text: "The header indicator gives the quick status. Open Execution here for exact status, runtime, memory, branch details, and errors."
             },
             {
                 sections: ["properties", "run"],

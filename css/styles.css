@@ -2496,3 +2496,298 @@ button {
 .workflow-command-item:disabled .workflow-menu-shortcut {
     color: currentColor;
 }
+
+/* =========================================================
+   Batch 1 — simplified research-workflow interface
+   ========================================================= */
+
+/* Cleaner widget header: title first, quiet state controls second. */
+.widget-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 36px;
+    padding: 7px 8px 7px 10px;
+    background-color: #e2e8f0;
+}
+
+.widget-title-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 700;
+}
+
+.widget-header-actions {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 5px;
+}
+
+.widget-header-indicator {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1;
+}
+
+.widget-note-indicator[hidden],
+.widget-error-indicator[hidden],
+.widget-status-indicator[hidden] {
+    display: none;
+}
+
+.widget-error-indicator {
+    color: #b91c1c;
+}
+
+/*
+ * Status is intentionally concentrated in one compact indicator instead
+ * of tinting the entire widget. Shape/symbol + tooltip/ARIA supplement color.
+ */
+.widget-status-indicator {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    padding: 0;
+    border: 2px solid #94a3b8;
+    border-radius: 50%;
+    background: #f8fafc;
+    color: #fff;
+    font-size: 8px;
+    font-weight: 900;
+    line-height: 1;
+    cursor: help;
+}
+
+.widget-status-indicator:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+}
+
+.widget-status-indicator.status-idle,
+.widget-status-indicator.status-waiting {
+    border-color: #94a3b8;
+    background: #94a3b8;
+}
+
+.widget-status-indicator.status-running {
+    border-color: #15803d;
+    background: #15803d;
+}
+
+.widget-status-indicator.status-finished {
+    border-color: #166534;
+    background: #166534;
+}
+
+.widget-status-indicator.status-error {
+    border-color: #b91c1c;
+    background: #b91c1c;
+}
+
+.widget-status-indicator.status-stopped {
+    border-color: #a16207;
+    background: #a16207;
+}
+
+.widget-status-indicator.status-skipped {
+    border-color: #64748b;
+    background: #64748b;
+}
+
+.widget-collapse-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: #475569;
+    font-size: 13px;
+    line-height: 1;
+}
+
+.widget-collapse-button:hover,
+.widget-collapse-button:focus-visible {
+    border-color: #cbd5e1;
+    background: #f8fafc;
+}
+
+.widget-collapse-button:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 1px;
+}
+
+/* The old status footer remains only as an accessible live region. */
+.widget-status-sr {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0 0 0 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+
+/* Default widgets are quieter: empty Any values do not add visual noise. */
+.widget-io-content {
+    padding-top: 6px;
+    padding-bottom: 7px;
+}
+
+/* Collapsing preserves every port while removing labels/value clutter. */
+.widget.collapsed {
+    min-height: 0;
+}
+
+.widget.collapsed .widget-io-content {
+    display: block;
+    padding: 3px 10px 4px;
+}
+
+.widget.collapsed .widget-io-row {
+    min-height: 14px;
+}
+
+.widget.collapsed .widget-io-text,
+.widget.collapsed .widget-branch-badge,
+.widget.collapsed .widget-empty-io {
+    visibility: hidden;
+    width: 100%;
+    height: 0;
+    overflow: hidden;
+}
+
+/* Keep status color localized to the header indicator. */
+.widget[data-status="running"],
+.widget[data-status="finished"],
+.widget[data-status="error"] {
+    border-color: #64748b;
+    box-shadow: 0 4px 10px rgb(0 0 0 / 12%);
+}
+
+.widget[data-status="running"]:hover,
+.widget[data-status="finished"]:hover,
+.widget[data-status="error"]:hover,
+.widget.selected[data-status="running"],
+.widget.selected[data-status="finished"],
+.widget.selected[data-status="error"] {
+    border-color: #2563eb;
+}
+
+/* Decision identity stays structural instead of relying on a bright color. */
+.widget[data-widget-type="Decision"] .widget-title::before {
+    color: #64748b;
+}
+
+/* ---------------- Progressive Properties panel ---------------- */
+.property-group {
+    margin: 0 0 8px;
+    border: 1px solid #cbd5e1;
+    border-radius: 7px;
+    background: #fff;
+    overflow: hidden;
+}
+
+.property-group-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+    min-height: 38px;
+    padding: 8px 10px;
+    border: 0;
+    background: #f8fafc;
+    color: #1f2937;
+    text-align: left;
+}
+
+.property-group-toggle:hover {
+    background: #f1f5f9;
+}
+
+.property-group-toggle:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: -2px;
+}
+
+.property-group-title {
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.property-group-chevron {
+    color: #64748b;
+    font-size: 18px;
+    font-weight: 400;
+    line-height: 1;
+}
+
+.property-group-body {
+    padding: 9px 10px 10px;
+}
+
+.property-group-description {
+    margin: 0 0 9px;
+    color: #64748b;
+    font-size: 11px;
+    line-height: 1.35;
+}
+
+.property-group.collapsed .property-group-toggle {
+    background: #fff;
+}
+
+/* Nested sections should read as subheadings, not more boxes. */
+.property-group-body > .property-section {
+    margin: 0 0 11px;
+    padding: 0 0 11px;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.property-group-body > .property-section:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: 0;
+}
+
+.property-group-body > .property-section .property-section-title {
+    margin-bottom: 6px;
+    color: #475569;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.property-group-body > .stacked-property-actions {
+    margin-top: 6px;
+}
+
+/* Research notes are intentionally plain and compact. */
+[data-tour="properties-advanced"] textarea {
+    width: 100%;
+    min-height: 70px;
+    padding: 7px 8px;
+    border: 1px solid #9ca3af;
+    border-radius: 4px;
+    resize: vertical;
+    color: #1f2937;
+    font: inherit;
+}
