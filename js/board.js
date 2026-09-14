@@ -34,7 +34,7 @@ class Board {
 
         /* Guided interface tutorial. */
         this.tutorialStorageKey =
-            "workflowBuilderInterfaceTutorialSeenV4";
+            "workflowBuilderInterfaceTutorialSeenV5";
         this.tutorialActive = false;
         this.tutorialStepIndex = 0;
         this.tutorialSteps = [];
@@ -142,6 +142,21 @@ class Board {
         this.activeResearchPanel = null;
 
         /*
+         * Large-workflow organization state.
+         *
+         * Sections are lightweight visual groups. Focus Mode, search,
+         * command palette, and alignment guides are interface state and
+         * intentionally stay separate from execution logic.
+         */
+        this.workflowGroups = [];
+        this.nextGroupNumber = 1;
+        this.focusModeRootWidgetId = null;
+        this.focusModeWidgetIds = new Set();
+        this.alignmentGuideElements = [];
+        this.activeCommandPalette = null;
+        this.activeSectionDialog = null;
+
+        /*
          * Runtime branch-state map.
          *
          * Every connection is marked active/inactive as its source node
@@ -215,6 +230,7 @@ class Board {
         this.updateWorkspaceTransform();
         this.updateStats();
         this.updateWorkflowMap();
+        this.updateOrganizationControls();
     }
 
     createMenuBar() {
@@ -663,6 +679,93 @@ class Board {
 
 
         /* =============================
+         * Organize
+         * ============================= */
+        const organizeMenu = document.createElement("div");
+        organizeMenu.className = "dropdown-menu";
+        organizeMenu.dataset.tour = "organize-menu";
+
+        const organizeButton = document.createElement("button");
+        organizeButton.className = "dropdown-button";
+        organizeButton.textContent = "Organize";
+        organizeButton.title = "Tools for larger workflows";
+
+        const organizeDropdown = document.createElement("div");
+        organizeDropdown.className =
+            "dropdown-content organize-dropdown-content";
+
+        const findWidgetItem = document.createElement("button");
+        findWidgetItem.type = "button";
+        findWidgetItem.textContent = "Find Widget…   Ctrl+Shift+F";
+        findWidgetItem.addEventListener("click", () => {
+            this.openWidgetFinder();
+        });
+
+        const commandPaletteItem = document.createElement("button");
+        commandPaletteItem.type = "button";
+        commandPaletteItem.textContent = "Command Palette…   Ctrl+K";
+        commandPaletteItem.addEventListener("click", () => {
+            this.openCommandPalette();
+        });
+
+        const autoLayoutItem = document.createElement("button");
+        autoLayoutItem.type = "button";
+        autoLayoutItem.textContent = "Auto-layout Workflow   Ctrl+Alt+L";
+        autoLayoutItem.addEventListener("click", () => {
+            this.autoLayoutWorkflow();
+        });
+
+        const fitWorkflowItem = document.createElement("button");
+        fitWorkflowItem.type = "button";
+        fitWorkflowItem.textContent = "Fit Workflow in View";
+        fitWorkflowItem.addEventListener("click", () => {
+            this.fitWorkflowInView();
+        });
+
+        const organizeDividerOne = document.createElement("div");
+        organizeDividerOne.className = "dropdown-divider";
+
+        const focusSelectedItem = document.createElement("button");
+        focusSelectedItem.type = "button";
+        focusSelectedItem.textContent = "Focus on Selected Widget   F";
+        focusSelectedItem.addEventListener("click", () => {
+            this.activateFocusMode(this.selectedWidget);
+        });
+
+        const clearFocusItem = document.createElement("button");
+        clearFocusItem.type = "button";
+        clearFocusItem.textContent = "Clear Focus Mode   Esc";
+        clearFocusItem.addEventListener("click", () => {
+            this.clearFocusMode();
+        });
+
+        const organizeDividerTwo = document.createElement("div");
+        organizeDividerTwo.className = "dropdown-divider";
+
+        const createSectionItem = document.createElement("button");
+        createSectionItem.type = "button";
+        createSectionItem.textContent = "Create Section…";
+        createSectionItem.addEventListener("click", () => {
+            this.openSectionDialog();
+        });
+
+        organizeDropdown.appendChild(findWidgetItem);
+        organizeDropdown.appendChild(commandPaletteItem);
+        organizeDropdown.appendChild(autoLayoutItem);
+        organizeDropdown.appendChild(fitWorkflowItem);
+        organizeDropdown.appendChild(organizeDividerOne);
+        organizeDropdown.appendChild(focusSelectedItem);
+        organizeDropdown.appendChild(clearFocusItem);
+        organizeDropdown.appendChild(organizeDividerTwo);
+        organizeDropdown.appendChild(createSectionItem);
+        organizeMenu.appendChild(organizeButton);
+        organizeMenu.appendChild(organizeDropdown);
+
+        this.organizeFocusMenuItem = focusSelectedItem;
+        this.organizeClearFocusMenuItem = clearFocusItem;
+
+
+        /* =============================
          * Help
          * ============================= */
         const helpMenu = document.createElement("div");
@@ -686,6 +789,7 @@ class Board {
             ["io", "Inputs & Outputs"],
             ["debug", "Data & Debugging"],
             ["research", "Research & Reproducibility"],
+            ["organization", "Organization & Navigation"],
             ["properties", "Properties Panel"],
             ["scripts", "Scripts & Languages"],
             ["decisions", "Decision Nodes"],
@@ -871,6 +975,7 @@ class Board {
         menuBar.appendChild(viewMenu);
         menuBar.appendChild(workflowMenu);
         menuBar.appendChild(researchMenu);
+        menuBar.appendChild(organizeMenu);
         menuBar.appendChild(helpMenu);
         menuBar.appendChild(historyControls);
         menuBar.appendChild(runControls);
@@ -2143,14 +2248,37 @@ class Board {
 
         this.widgets.splice(widgetIndex, 1);
 
+        this.workflowGroups = this.workflowGroups
+            .map((group) => ({
+                ...group,
+                widgetIds: group.widgetIds.filter(
+                    (id) => id !== widget.id
+                )
+            }))
+            .filter((group) => group.widgetIds.length > 0);
+
+        if (this.focusModeRootWidgetId === widget.id) {
+            this.focusModeRootWidgetId = null;
+            this.focusModeWidgetIds = new Set();
+        } else if (this.focusModeRootWidgetId) {
+            const root = this.widgets.find(
+                (item) => item.id === this.focusModeRootWidgetId
+            );
+            this.focusModeWidgetIds =
+                this.getFocusWidgetIds(root);
+        }
+
         if (this.selectedWidget === widget) {
             this.selectedWidget = null;
             this.showNoSelectionMessage();
         }
 
         this.updateWidgetPeek();
+        this.renderWorkflowGroups();
+        this.applyFocusModeVisuals();
         this.updateStats();
         this.updateWorkflowMap();
+        this.updateOrganizationControls();
         this.scheduleSave();
     }
 
@@ -3053,6 +3181,51 @@ class Board {
 
         if (
             modifierKey &&
+            !event.shiftKey &&
+            event.key.toLowerCase() === "k"
+        ) {
+            event.preventDefault();
+            this.openCommandPalette();
+            return;
+        }
+
+        if (
+            modifierKey &&
+            event.shiftKey &&
+            event.key.toLowerCase() === "f"
+        ) {
+            event.preventDefault();
+            this.openWidgetFinder();
+            return;
+        }
+
+        if (
+            modifierKey &&
+            event.altKey &&
+            event.key.toLowerCase() === "l"
+        ) {
+            event.preventDefault();
+            this.autoLayoutWorkflow();
+            return;
+        }
+
+        if (
+            !modifierKey &&
+            !event.altKey &&
+            !event.shiftKey &&
+            event.key.toLowerCase() === "f"
+        ) {
+            if (this.selectedWidget) {
+                event.preventDefault();
+                this.activateFocusMode(
+                    this.selectedWidget
+                );
+            }
+            return;
+        }
+
+        if (
+            modifierKey &&
             event.code === "Backquote"
         ) {
             event.preventDefault();
@@ -3150,6 +3323,11 @@ class Board {
         }
 
         if (event.key === "Escape") {
+            if (this.focusModeRootWidgetId) {
+                this.clearFocusMode();
+                return;
+            }
+
             this.clearPinnedWidgetPeek();
             this.hideContextMenu();
             this.selectWidget(null);
@@ -3227,6 +3405,7 @@ class Board {
         this.updateStats();
         this.updateWorkflowMap();
         this.updateRunControls();
+        this.updateOrganizationControls();
     }
 
     selectConnection(connection) {
@@ -3253,6 +3432,7 @@ class Board {
             this.updateStats();
             this.updateWorkflowMap();
             this.updateRunControls();
+            this.updateOrganizationControls();
             return;
         }
 
@@ -3272,6 +3452,7 @@ class Board {
         this.updateStats();
         this.updateWorkflowMap();
         this.updateRunControls();
+        this.updateOrganizationControls();
     }
 
     clearConnectionSelection() {
@@ -7069,6 +7250,17 @@ class Board {
         this.clearConnectionPeekVisuals();
 
         this.clearConnections();
+        this.clearAlignmentGuides();
+        this.closeCommandPalette();
+        this.closeSectionDialog();
+        this.workspace
+            ?.querySelectorAll(".workflow-group")
+            .forEach((element) => element.remove());
+        this.workflowGroups = [];
+        this.nextGroupNumber = 1;
+        this.focusModeRootWidgetId = null;
+        this.focusModeWidgetIds = new Set();
+
         this.widgets.forEach((widget) => {
             if (widget.element) {
                 widget.element.remove();
@@ -8250,6 +8442,50 @@ class Board {
             );
         }
 
+        this.workflowGroups =
+            Array.isArray(
+                workflowData.workflowGroups
+            )
+                ? workflowData.workflowGroups
+                    .map((group, index) => ({
+                        id:
+                            String(
+                                group.id ||
+                                `group-${index + 1}`
+                            ),
+                        title:
+                            String(
+                                group.title ||
+                                `Section ${index + 1}`
+                            ),
+                        widgetIds:
+                            Array.isArray(group.widgetIds)
+                                ? group.widgetIds
+                                    .map(String)
+                                    .filter((id) =>
+                                        this.widgets.some(
+                                            (widget) => widget.id === id
+                                        )
+                                    )
+                                : []
+                    }))
+                    .filter(
+                        (group) =>
+                            group.widgetIds.length > 0
+                    )
+                : [];
+
+        const groupNumbers =
+            this.workflowGroups.map((group) => {
+                const match = String(group.id).match(
+                    /^group-(\d+)$/
+                );
+                return match ? Number(match[1]) : 0;
+            });
+
+        this.nextGroupNumber =
+            Math.max(0, ...groupNumbers) + 1;
+
         if (
             typeof workflowData.zoom ===
             "number"
@@ -8337,9 +8573,11 @@ class Board {
             ) + 1;
 
         this.applyPanelWidths();
+        this.renderWorkflowGroups();
         this.updateWorkspaceTransform();
         this.updateStats();
         this.updateWorkflowMap();
+        this.updateOrganizationControls();
 
         this.scheduleSave();
     }
@@ -8524,6 +8762,39 @@ class Board {
                 target: '[data-tour="research-menu"]',
                 prepare: openMenu("research-menu"),
                 text: "Snapshots are named checkpoints. Compare Runs shows performance and outputs from two experiments side by side."
+            },
+            {
+                sections: ["organization", "basics"],
+                title: "Organize large workflows",
+                target: '[data-tour="organize-menu"]',
+                prepare: openMenu("organize-menu"),
+                text: "Use Organize when the canvas gets crowded: search, auto-layout, focus, and sections all live here."
+            },
+            {
+                sections: ["organization", "canvas"],
+                title: "Auto-layout and snapping",
+                target: '[data-tour="workspace"]',
+                text: "Auto-layout arranges the graph left to right. While dragging, subtle guides snap matching edges and centers; hold Alt to move freely."
+            },
+            {
+                sections: ["organization", "shortcuts"],
+                title: "Find anything quickly",
+                target: '[data-tour="organize-menu"]',
+                prepare: openMenu("organize-menu"),
+                text: "Ctrl+K opens the Command Palette. Ctrl+Shift+F searches widgets by name, type, port, note, or status."
+            },
+            {
+                sections: ["organization", "widgets"],
+                title: "Focus Mode",
+                target: '[data-tour="workspace"]',
+                text: "Select a widget and press F to fade unrelated nodes. The selected node and its direct neighbors stay clear. Esc exits Focus Mode."
+            },
+            {
+                sections: ["organization"],
+                title: "Sections",
+                target: '[data-tour="organize-menu"]',
+                prepare: openMenu("organize-menu"),
+                text: "Sections label related workflow stages without changing execution. Right-click a section title to edit, duplicate, or remove it."
             },
             {
                 sections: ["basics", "shortcuts"],
@@ -8750,7 +9021,7 @@ class Board {
                 sections: ["shortcuts"],
                 title: "Keyboard Shortcuts",
                 target: '[data-tour="help-menu"]',
-                text: "Ctrl+Enter runs everything. Ctrl+Shift+Enter runs the selected node. Ctrl+Alt+Enter runs from it. Ctrl+. pauses or resumes."
+                text: "Ctrl+K opens commands. Ctrl+Shift+F finds widgets. Ctrl+Alt+L auto-layouts. Ctrl+Enter runs everything; Ctrl+. pauses or resumes."
             },
             {
                 sections: ["basics"],
@@ -11615,6 +11886,11 @@ class Board {
                     this.connections.map(
                         (connection) =>
                             connection.toJSON()
+                    ),
+
+                workflowGroups:
+                    this.cloneResearchValue(
+                        this.workflowGroups
                     )
             }
         );
@@ -11879,7 +12155,7 @@ class Board {
 
     getWorkflowData() {
         return {
-            version: 3,
+            version: 4,
 
             workflowMetadata:
                 this.cloneResearchValue(
@@ -11928,6 +12204,11 @@ class Board {
                     (connection) => {
                         return connection.toJSON();
                     }
+                ),
+
+            workflowGroups:
+                this.cloneResearchValue(
+                    this.workflowGroups
                 )
         };
     }
@@ -12057,7 +12338,7 @@ class Board {
 
     getReproducibleWorkflowData() {
         return {
-            version: 3,
+            version: 4,
             workflowMetadata:
                 this.cloneResearchValue(
                     this.workflowMetadata
@@ -12070,6 +12351,10 @@ class Board {
                 this.connections.map(
                     (connection) =>
                         connection.toJSON()
+                ),
+            workflowGroups:
+                this.cloneResearchValue(
+                    this.workflowGroups
                 )
         };
     }
@@ -13512,6 +13797,1351 @@ class Board {
         });
     }
 
+    updateOrganizationControls() {
+        if (this.organizeFocusMenuItem) {
+            this.organizeFocusMenuItem.disabled =
+                !this.selectedWidget;
+        }
+
+        if (this.organizeClearFocusMenuItem) {
+            this.organizeClearFocusMenuItem.disabled =
+                !this.focusModeRootWidgetId;
+        }
+    }
+
+    getWidgetDisplaySize(widget) {
+        return {
+            width:
+                widget?.element?.offsetWidth ||
+                210,
+            height:
+                widget?.element?.offsetHeight ||
+                120
+        };
+    }
+
+    autoLayoutWorkflow() {
+        if (this.widgets.length === 0) {
+            void this.showMessageDialog({
+                title: "Nothing to Arrange",
+                message:
+                    "Add at least one widget before using Auto-layout."
+            });
+            return;
+        }
+
+        this.recordHistoryState();
+
+        const widgets = [...this.widgets];
+        const indegree = new Map();
+        const outgoing = new Map();
+        const layer = new Map();
+        const seenEdges = new Set();
+
+        widgets.forEach((widget) => {
+            indegree.set(widget, 0);
+            outgoing.set(widget, []);
+            layer.set(widget, 0);
+        });
+
+        this.connections.forEach((connection) => {
+            const source = connection.sourceWidget;
+            const target = connection.targetWidget;
+
+            if (!indegree.has(source) || !indegree.has(target)) {
+                return;
+            }
+
+            const edgeKey = `${source.id}->${target.id}`;
+            if (seenEdges.has(edgeKey)) {
+                return;
+            }
+
+            seenEdges.add(edgeKey);
+            outgoing.get(source).push(target);
+            indegree.set(
+                target,
+                indegree.get(target) + 1
+            );
+        });
+
+        const queue = widgets
+            .filter((widget) => indegree.get(widget) === 0)
+            .sort((a, b) => a.y - b.y || a.x - b.x);
+
+        const visited = new Set();
+
+        while (queue.length > 0) {
+            const widget = queue.shift();
+            visited.add(widget);
+
+            outgoing.get(widget).forEach((target) => {
+                layer.set(
+                    target,
+                    Math.max(
+                        layer.get(target),
+                        layer.get(widget) + 1
+                    )
+                );
+
+                indegree.set(
+                    target,
+                    indegree.get(target) - 1
+                );
+
+                if (indegree.get(target) === 0) {
+                    queue.push(target);
+                }
+            });
+        }
+
+        let finalLayer = Math.max(
+            0,
+            ...Array.from(layer.values())
+        );
+
+        widgets
+            .filter((widget) => !visited.has(widget))
+            .sort((a, b) => a.y - b.y || a.x - b.x)
+            .forEach((widget) => {
+                finalLayer += 1;
+                layer.set(widget, finalLayer);
+            });
+
+        const columns = new Map();
+        widgets.forEach((widget) => {
+            const column = layer.get(widget) || 0;
+            if (!columns.has(column)) {
+                columns.set(column, []);
+            }
+            columns.get(column).push(widget);
+        });
+
+        const startX = 420;
+        const startY = 320;
+        const columnSpacing = 330;
+        const rowSpacing = 170;
+
+        [...columns.entries()]
+            .sort((a, b) => a[0] - b[0])
+            .forEach(([column, columnWidgets]) => {
+                columnWidgets
+                    .sort((a, b) => a.y - b.y || a.x - b.x)
+                    .forEach((widget, row) => {
+                        const size =
+                            this.getWidgetDisplaySize(widget);
+
+                        widget.x = Math.max(
+                            0,
+                            Math.min(
+                                this.workspaceWidth - size.width,
+                                startX + column * columnSpacing
+                            )
+                        );
+
+                        widget.y = Math.max(
+                            0,
+                            Math.min(
+                                this.workspaceHeight - size.height,
+                                startY + row * rowSpacing
+                            )
+                        );
+
+                        widget.updatePosition();
+                    });
+            });
+
+        this.connections.forEach((connection) => {
+            connection.update();
+        });
+
+        this.renderWorkflowGroups();
+        this.updateWidgetPeek();
+        this.updateConnectionPeek();
+        this.updateWorkflowMap();
+        this.fitWorkflowInView();
+        this.scheduleSave();
+    }
+
+    fitWorkflowInView() {
+        if (
+            this.widgets.length === 0 ||
+            !this.workspaceContainer
+        ) {
+            return;
+        }
+
+        const bounds = this.widgets
+            .map((widget) => widget.getBounds())
+            .filter(Boolean);
+
+        if (bounds.length === 0) {
+            return;
+        }
+
+        const minX = Math.min(...bounds.map((item) => item.left));
+        const minY = Math.min(...bounds.map((item) => item.top));
+        const maxX = Math.max(...bounds.map((item) => item.right));
+        const maxY = Math.max(...bounds.map((item) => item.bottom));
+
+        const contentWidth = Math.max(1, maxX - minX);
+        const contentHeight = Math.max(1, maxY - minY);
+        const padding = 140;
+
+        const availableWidth =
+            Math.max(1, this.workspaceContainer.clientWidth - padding);
+        const availableHeight =
+            Math.max(1, this.workspaceContainer.clientHeight - padding);
+
+        const nextZoom = Math.max(
+            this.minimumZoom,
+            Math.min(
+                1.15,
+                availableWidth / contentWidth,
+                availableHeight / contentHeight,
+                this.maximumZoom
+            )
+        );
+
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+
+        this.zoom = nextZoom;
+        this.panX =
+            this.workspaceContainer.clientWidth / 2 -
+            centerX * this.zoom;
+        this.panY =
+            this.workspaceContainer.clientHeight / 2 -
+            centerY * this.zoom;
+
+        this.constrainPan();
+        this.updateWorkspaceTransform();
+        this.updateStats();
+    }
+
+    getSnappedWidgetPosition(
+        widget,
+        proposedX,
+        proposedY,
+        { disable = false } = {}
+    ) {
+        if (disable || !widget) {
+            return {
+                x: proposedX,
+                y: proposedY,
+                verticalGuide: null,
+                horizontalGuide: null
+            };
+        }
+
+        const threshold = 8 / Math.max(this.zoom, 0.25);
+        const size = this.getWidgetDisplaySize(widget);
+
+        const xAnchors = [
+            { value: proposedX, offset: 0 },
+            { value: proposedX + size.width / 2, offset: size.width / 2 },
+            { value: proposedX + size.width, offset: size.width }
+        ];
+
+        const yAnchors = [
+            { value: proposedY, offset: 0 },
+            { value: proposedY + size.height / 2, offset: size.height / 2 },
+            { value: proposedY + size.height, offset: size.height }
+        ];
+
+        let bestX = null;
+        let bestY = null;
+
+        this.widgets.forEach((otherWidget) => {
+            if (
+                otherWidget === widget ||
+                !otherWidget.element
+            ) {
+                return;
+            }
+
+            const otherBounds = otherWidget.getBounds();
+            if (!otherBounds) {
+                return;
+            }
+
+            const otherXAnchors = [
+                otherBounds.left,
+                otherBounds.centerX,
+                otherBounds.right
+            ];
+
+            const otherYAnchors = [
+                otherBounds.top,
+                otherBounds.centerY,
+                otherBounds.bottom
+            ];
+
+            xAnchors.forEach((anchor) => {
+                otherXAnchors.forEach((target) => {
+                    const difference = target - anchor.value;
+                    const distance = Math.abs(difference);
+                    if (
+                        distance <= threshold &&
+                        (!bestX || distance < bestX.distance)
+                    ) {
+                        bestX = {
+                            distance,
+                            x: proposedX + difference,
+                            guide: target
+                        };
+                    }
+                });
+            });
+
+            yAnchors.forEach((anchor) => {
+                otherYAnchors.forEach((target) => {
+                    const difference = target - anchor.value;
+                    const distance = Math.abs(difference);
+                    if (
+                        distance <= threshold &&
+                        (!bestY || distance < bestY.distance)
+                    ) {
+                        bestY = {
+                            distance,
+                            y: proposedY + difference,
+                            guide: target
+                        };
+                    }
+                });
+            });
+        });
+
+        return {
+            x: bestX ? bestX.x : proposedX,
+            y: bestY ? bestY.y : proposedY,
+            verticalGuide: bestX ? bestX.guide : null,
+            horizontalGuide: bestY ? bestY.guide : null
+        };
+    }
+
+    showAlignmentGuides({
+        verticalGuide = null,
+        horizontalGuide = null
+    } = {}) {
+        this.clearAlignmentGuides();
+
+        if (!this.workspace) {
+            return;
+        }
+
+        if (Number.isFinite(verticalGuide)) {
+            const guide = document.createElement("div");
+            guide.className = "alignment-guide alignment-guide-vertical";
+            guide.style.left = `${verticalGuide}px`;
+            this.workspace.appendChild(guide);
+            this.alignmentGuideElements.push(guide);
+        }
+
+        if (Number.isFinite(horizontalGuide)) {
+            const guide = document.createElement("div");
+            guide.className = "alignment-guide alignment-guide-horizontal";
+            guide.style.top = `${horizontalGuide}px`;
+            this.workspace.appendChild(guide);
+            this.alignmentGuideElements.push(guide);
+        }
+    }
+
+    clearAlignmentGuides() {
+        this.alignmentGuideElements.forEach((element) => {
+            element.remove();
+        });
+        this.alignmentGuideElements = [];
+    }
+
+    navigateToWidget(widget) {
+        if (
+            !widget ||
+            !this.widgets.includes(widget)
+        ) {
+            return;
+        }
+
+        const bounds = widget.getBounds();
+        if (!bounds) {
+            return;
+        }
+
+        this.panX =
+            this.workspaceContainer.clientWidth / 2 -
+            bounds.centerX * this.zoom;
+        this.panY =
+            this.workspaceContainer.clientHeight / 2 -
+            bounds.centerY * this.zoom;
+
+        this.constrainPan();
+        this.updateWorkspaceTransform();
+        this.selectWidget(widget);
+
+        widget.element?.classList.add(
+            "widget-navigation-pulse"
+        );
+
+        window.setTimeout(() => {
+            widget.element?.classList.remove(
+                "widget-navigation-pulse"
+            );
+        }, 650);
+    }
+
+    getCommandPaletteItems({ widgetOnly = false } = {}) {
+        const widgetItems = this.widgets.map((widget) => ({
+            label: widget.title,
+            description:
+                `${widget.type} · ${widget.status || "idle"}`,
+            keywords:
+                `${widget.title} ${widget.type} ${widget.status} ` +
+                `${widget.notes || ""} ` +
+                widget.inputs.map((port) => port.name).join(" ") +
+                " " +
+                widget.outputs.map((port) => port.name).join(" "),
+            icon: "node",
+            action: () => this.navigateToWidget(widget)
+        }));
+
+        if (widgetOnly) {
+            return widgetItems;
+        }
+
+        const commands = [
+            {
+                label: "Find Widget",
+                description: "Search and jump to a node",
+                keywords: "search find node widget navigate",
+                icon: "search",
+                action: () => this.openWidgetFinder()
+            },
+            {
+                label: "Auto-layout Workflow",
+                description: "Arrange nodes from left to right",
+                keywords: "arrange organize layout clean",
+                icon: "layout",
+                action: () => this.autoLayoutWorkflow()
+            },
+            {
+                label: "Fit Workflow in View",
+                description: "Zoom so every node is visible",
+                keywords: "fit center zoom overview",
+                icon: "fit",
+                action: () => this.fitWorkflowInView()
+            },
+            {
+                label: "Create Section",
+                description: "Group related widgets under a label",
+                keywords: "group section stage organize",
+                icon: "section",
+                action: () => this.openSectionDialog()
+            },
+            {
+                label: "Focus on Selected Widget",
+                description: "Fade unrelated parts of the workflow",
+                keywords: "focus isolate selected",
+                icon: "focus",
+                disabled: !this.selectedWidget,
+                action: () => this.activateFocusMode(this.selectedWidget)
+            },
+            {
+                label: "Clear Focus Mode",
+                description: "Show the entire workflow again",
+                keywords: "focus clear show all",
+                icon: "focus",
+                disabled: !this.focusModeRootWidgetId,
+                action: () => this.clearFocusMode()
+            },
+            {
+                label: "Add Process Widget",
+                description: "Create a Process node",
+                keywords: "add create process node",
+                icon: "plus",
+                action: () => this.createWidget("Process")
+            },
+            {
+                label: "Add Decision Widget",
+                description: "Create a Decision node",
+                keywords: "add create decision branch node",
+                icon: "plus",
+                action: () => this.createWidget("Decision")
+            },
+            {
+                label: "Run Workflow",
+                description: "Validate and execute the full workflow",
+                keywords: "run execute play workflow",
+                icon: "run",
+                action: () => this.runWorkflow()
+            },
+            {
+                label: "Validate Workflow",
+                description: "Check the workflow without running it",
+                keywords: "validate check errors warnings",
+                icon: "check",
+                action: () => this.validateWorkflow(true)
+            },
+            {
+                label: "Toggle Execution Console",
+                description: "Show or hide runtime logs",
+                keywords: "console logs terminal execution",
+                icon: "console",
+                action: () => this.toggleExecutionConsole()
+            }
+        ];
+
+        return [
+            ...commands,
+            ...widgetItems.map((item) => ({
+                ...item,
+                label: `Go to: ${item.label}`
+            }))
+        ];
+    }
+
+    closeCommandPalette() {
+        if (this.activeCommandPalette) {
+            this.activeCommandPalette.remove();
+            this.activeCommandPalette = null;
+        }
+    }
+
+    openWidgetFinder() {
+        this.openCommandPalette({
+            widgetOnly: true,
+            title: "Find Widget",
+            placeholder:
+                "Search by name, type, port, note, or status…"
+        });
+    }
+
+    openCommandPalette({
+        widgetOnly = false,
+        title = "Command Palette",
+        placeholder = "Type a command or widget name…"
+    } = {}) {
+        this.closeCommandPalette();
+        this.hideContextMenu();
+
+        const overlay = document.createElement("div");
+        overlay.className = "command-palette-overlay";
+
+        const panel = document.createElement("div");
+        panel.className = "command-palette";
+        panel.setAttribute("role", "dialog");
+        panel.setAttribute("aria-modal", "true");
+        panel.setAttribute("aria-label", title);
+
+        const header = document.createElement("div");
+        header.className = "command-palette-header";
+
+        const titleElement = document.createElement("strong");
+        titleElement.textContent = title;
+
+        const hint = document.createElement("span");
+        hint.textContent = "↑↓ navigate · Enter select · Esc close";
+
+        header.appendChild(titleElement);
+        header.appendChild(hint);
+
+        const input = document.createElement("input");
+        input.type = "search";
+        input.className = "command-palette-input";
+        input.placeholder = placeholder;
+        input.autocomplete = "off";
+
+        const list = document.createElement("div");
+        list.className = "command-palette-results";
+        list.setAttribute("role", "listbox");
+
+        panel.appendChild(header);
+        panel.appendChild(input);
+        panel.appendChild(list);
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+
+        this.activeCommandPalette = overlay;
+
+        let selectedIndex = 0;
+        let visibleItems = [];
+
+        const executeItem = (item) => {
+            if (!item || item.disabled) {
+                return;
+            }
+
+            this.closeCommandPalette();
+            window.setTimeout(() => {
+                item.action();
+            }, 0);
+        };
+
+        const render = () => {
+            const query = input.value
+                .trim()
+                .toLowerCase();
+
+            visibleItems =
+                this.getCommandPaletteItems({ widgetOnly })
+                    .filter((item) => {
+                        if (!query) {
+                            return true;
+                        }
+
+                        return (
+                            `${item.label} ${item.description || ""} ${item.keywords || ""}`
+                                .toLowerCase()
+                                .includes(query)
+                        );
+                    })
+                    .slice(0, 30);
+
+            selectedIndex = Math.max(
+                0,
+                Math.min(
+                    selectedIndex,
+                    Math.max(0, visibleItems.length - 1)
+                )
+            );
+
+            list.innerHTML = "";
+
+            if (visibleItems.length === 0) {
+                const empty = document.createElement("div");
+                empty.className = "command-palette-empty";
+                empty.textContent = widgetOnly
+                    ? "No matching widgets."
+                    : "No matching commands.";
+                list.appendChild(empty);
+                return;
+            }
+
+            visibleItems.forEach((item, index) => {
+                const row = document.createElement("button");
+                row.type = "button";
+                row.className = "command-palette-result";
+                row.classList.toggle(
+                    "selected",
+                    index === selectedIndex
+                );
+                row.disabled = Boolean(item.disabled);
+
+                const text = document.createElement("span");
+                text.className = "command-palette-result-text";
+
+                const label = document.createElement("strong");
+                label.textContent = item.label;
+
+                const description = document.createElement("small");
+                description.textContent = item.description || "";
+
+                text.appendChild(label);
+                text.appendChild(description);
+                row.appendChild(text);
+
+                row.addEventListener("pointerenter", () => {
+                    selectedIndex = index;
+                    Array.from(list.children).forEach(
+                        (child, childIndex) => {
+                            child.classList?.toggle(
+                                "selected",
+                                childIndex === selectedIndex
+                            );
+                        }
+                    );
+                });
+
+                row.addEventListener("click", () => {
+                    executeItem(item);
+                });
+
+                list.appendChild(row);
+            });
+        };
+
+        input.addEventListener("input", () => {
+            selectedIndex = 0;
+            render();
+        });
+
+        panel.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") {
+                event.preventDefault();
+                this.closeCommandPalette();
+                return;
+            }
+
+            if (event.key === "ArrowDown") {
+                event.preventDefault();
+                selectedIndex = Math.min(
+                    visibleItems.length - 1,
+                    selectedIndex + 1
+                );
+                render();
+                list.children[selectedIndex]?.scrollIntoView({
+                    block: "nearest"
+                });
+                return;
+            }
+
+            if (event.key === "ArrowUp") {
+                event.preventDefault();
+                selectedIndex = Math.max(0, selectedIndex - 1);
+                render();
+                list.children[selectedIndex]?.scrollIntoView({
+                    block: "nearest"
+                });
+                return;
+            }
+
+            if (event.key === "Enter") {
+                event.preventDefault();
+                executeItem(visibleItems[selectedIndex]);
+            }
+        });
+
+        overlay.addEventListener("pointerdown", (event) => {
+            if (event.target === overlay) {
+                this.closeCommandPalette();
+            }
+        });
+
+        render();
+        window.setTimeout(() => input.focus(), 0);
+    }
+
+    getFocusWidgetIds(widget) {
+        const ids = new Set();
+
+        if (!widget) {
+            return ids;
+        }
+
+        ids.add(widget.id);
+
+        this.connections.forEach((connection) => {
+            if (connection.sourceWidget === widget) {
+                ids.add(connection.targetWidget.id);
+            }
+            if (connection.targetWidget === widget) {
+                ids.add(connection.sourceWidget.id);
+            }
+        });
+
+        return ids;
+    }
+
+    activateFocusMode(widget) {
+        if (
+            !widget ||
+            !this.widgets.includes(widget)
+        ) {
+            void this.showMessageDialog({
+                title: "Select a Widget First",
+                message:
+                    "Select the part of the workflow you want to focus on, then choose Focus Mode."
+            });
+            return;
+        }
+
+        this.focusModeRootWidgetId = widget.id;
+        this.focusModeWidgetIds =
+            this.getFocusWidgetIds(widget);
+        this.applyFocusModeVisuals();
+        this.updateOrganizationControls();
+    }
+
+    clearFocusMode() {
+        this.focusModeRootWidgetId = null;
+        this.focusModeWidgetIds = new Set();
+        this.applyFocusModeVisuals();
+        this.updateOrganizationControls();
+    }
+
+    applyFocusModeVisuals() {
+        const active = Boolean(this.focusModeRootWidgetId);
+
+        this.widgets.forEach((widget) => {
+            if (!widget.element) {
+                return;
+            }
+
+            const included =
+                !active ||
+                this.focusModeWidgetIds.has(widget.id);
+
+            widget.element.classList.toggle(
+                "focus-dimmed",
+                !included
+            );
+            widget.element.classList.toggle(
+                "focus-root",
+                active &&
+                widget.id === this.focusModeRootWidgetId
+            );
+        });
+
+        this.connections.forEach((connection) => {
+            if (!connection.groupElement) {
+                return;
+            }
+
+            const included =
+                !active ||
+                (
+                    this.focusModeWidgetIds.has(
+                        connection.sourceWidget.id
+                    ) &&
+                    this.focusModeWidgetIds.has(
+                        connection.targetWidget.id
+                    )
+                );
+
+            connection.groupElement.classList.toggle(
+                "focus-dimmed",
+                !included
+            );
+        });
+
+        this.renderWorkflowGroups();
+    }
+
+    closeSectionDialog() {
+        if (this.activeSectionDialog) {
+            this.activeSectionDialog.remove();
+            this.activeSectionDialog = null;
+        }
+    }
+
+    openSectionDialog(existingGroup = null) {
+        if (this.widgets.length === 0) {
+            void this.showMessageDialog({
+                title: "No Widgets to Group",
+                message:
+                    "Add some widgets before creating a section."
+            });
+            return;
+        }
+
+        this.closeSectionDialog();
+
+        const overlay = document.createElement("div");
+        overlay.className = "section-dialog-overlay";
+
+        const panel = document.createElement("div");
+        panel.className = "section-dialog";
+        panel.setAttribute("role", "dialog");
+        panel.setAttribute("aria-modal", "true");
+        panel.setAttribute(
+            "aria-label",
+            existingGroup ? "Edit section" : "Create section"
+        );
+
+        const heading = document.createElement("h2");
+        heading.textContent =
+            existingGroup ? "Edit Section" : "Create Section";
+
+        const description = document.createElement("p");
+        description.textContent =
+            "Use sections to label related stages without changing how the workflow executes.";
+
+        const titleLabel = document.createElement("label");
+        titleLabel.className = "section-dialog-label";
+        titleLabel.textContent = "Section name";
+
+        const titleInput = document.createElement("input");
+        titleInput.type = "text";
+        titleInput.value =
+            existingGroup?.title ||
+            `Section ${this.nextGroupNumber}`;
+
+        const widgetLabel = document.createElement("div");
+        widgetLabel.className = "section-dialog-label";
+        widgetLabel.textContent = "Widgets in this section";
+
+        const searchInput = document.createElement("input");
+        searchInput.type = "search";
+        searchInput.placeholder = "Filter widgets…";
+        searchInput.className = "section-dialog-search";
+
+        const list = document.createElement("div");
+        list.className = "section-widget-list";
+
+        const selectedIds = new Set(
+            existingGroup?.widgetIds ||
+            (this.selectedWidget
+                ? [this.selectedWidget.id]
+                : [])
+        );
+
+        const renderList = () => {
+            const query = searchInput.value
+                .trim()
+                .toLowerCase();
+            list.innerHTML = "";
+
+            this.widgets
+                .filter((widget) =>
+                    !query ||
+                    `${widget.title} ${widget.type}`
+                        .toLowerCase()
+                        .includes(query)
+                )
+                .forEach((widget) => {
+                    const row = document.createElement("label");
+                    row.className = "section-widget-option";
+
+                    const checkbox = document.createElement("input");
+                    checkbox.type = "checkbox";
+                    checkbox.checked = selectedIds.has(widget.id);
+                    checkbox.addEventListener("change", () => {
+                        if (checkbox.checked) {
+                            selectedIds.add(widget.id);
+                        } else {
+                            selectedIds.delete(widget.id);
+                        }
+                    });
+
+                    const text = document.createElement("span");
+                    const name = document.createElement("strong");
+                    name.textContent = widget.title;
+                    const type = document.createElement("small");
+                    type.textContent = widget.type;
+                    text.appendChild(name);
+                    text.appendChild(type);
+
+                    row.appendChild(checkbox);
+                    row.appendChild(text);
+                    list.appendChild(row);
+                });
+        };
+
+        const actions = document.createElement("div");
+        actions.className = "section-dialog-actions";
+
+        const cancelButton = document.createElement("button");
+        cancelButton.type = "button";
+        cancelButton.textContent = "Cancel";
+
+        const saveButton = document.createElement("button");
+        saveButton.type = "button";
+        saveButton.className = "primary";
+        saveButton.textContent =
+            existingGroup ? "Save Section" : "Create Section";
+
+        cancelButton.addEventListener("click", () => {
+            this.closeSectionDialog();
+        });
+
+        saveButton.addEventListener("click", () => {
+            const title = titleInput.value.trim();
+
+            if (!title) {
+                titleInput.focus();
+                return;
+            }
+
+            if (selectedIds.size === 0) {
+                void this.showMessageDialog({
+                    title: "Choose at Least One Widget",
+                    message:
+                        "A section needs at least one widget."
+                });
+                return;
+            }
+
+            this.recordHistoryState();
+
+            if (existingGroup) {
+                existingGroup.title = title;
+                existingGroup.widgetIds = [...selectedIds];
+            } else {
+                this.workflowGroups.push({
+                    id: `group-${this.nextGroupNumber}`,
+                    title,
+                    widgetIds: [...selectedIds]
+                });
+                this.nextGroupNumber += 1;
+            }
+
+            this.closeSectionDialog();
+            this.renderWorkflowGroups();
+            this.scheduleSave();
+        });
+
+        searchInput.addEventListener("input", renderList);
+
+        actions.appendChild(cancelButton);
+        actions.appendChild(saveButton);
+
+        panel.appendChild(heading);
+        panel.appendChild(description);
+        panel.appendChild(titleLabel);
+        panel.appendChild(titleInput);
+        panel.appendChild(widgetLabel);
+        panel.appendChild(searchInput);
+        panel.appendChild(list);
+        panel.appendChild(actions);
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+
+        this.activeSectionDialog = overlay;
+
+        overlay.addEventListener("pointerdown", (event) => {
+            if (event.target === overlay) {
+                this.closeSectionDialog();
+            }
+        });
+
+        panel.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") {
+                event.preventDefault();
+                this.closeSectionDialog();
+            }
+        });
+
+        renderList();
+        window.setTimeout(() => {
+            titleInput.focus();
+            titleInput.select();
+        }, 0);
+    }
+
+    getWorkflowGroupBounds(group) {
+        const members = (group?.widgetIds || [])
+            .map((id) =>
+                this.widgets.find((widget) => widget.id === id)
+            )
+            .filter(Boolean);
+
+        if (members.length === 0) {
+            return null;
+        }
+
+        const bounds = members
+            .map((widget) => widget.getBounds())
+            .filter(Boolean);
+
+        if (bounds.length === 0) {
+            return null;
+        }
+
+        const padding = 34;
+        const headerSpace = 22;
+        const left = Math.max(
+            0,
+            Math.min(...bounds.map((item) => item.left)) - padding
+        );
+        const top = Math.max(
+            0,
+            Math.min(...bounds.map((item) => item.top)) -
+                padding -
+                headerSpace
+        );
+        const right = Math.min(
+            this.workspaceWidth,
+            Math.max(...bounds.map((item) => item.right)) + padding
+        );
+        const bottom = Math.min(
+            this.workspaceHeight,
+            Math.max(...bounds.map((item) => item.bottom)) + padding
+        );
+
+        return {
+            left,
+            top,
+            width: right - left,
+            height: bottom - top
+        };
+    }
+
+    renderWorkflowGroups() {
+        if (!this.workspace) {
+            return;
+        }
+
+        this.workspace
+            .querySelectorAll(".workflow-group")
+            .forEach((element) => element.remove());
+
+        this.workflowGroups = this.workflowGroups
+            .map((group) => ({
+                ...group,
+                widgetIds: (group.widgetIds || [])
+                    .filter((id) =>
+                        this.widgets.some((widget) => widget.id === id)
+                    )
+            }))
+            .filter((group) => group.widgetIds.length > 0);
+
+        this.workflowGroups.forEach((group) => {
+            const bounds = this.getWorkflowGroupBounds(group);
+            if (!bounds) {
+                return;
+            }
+
+            const element = document.createElement("div");
+            element.className = "workflow-group";
+            element.dataset.groupId = group.id;
+            element.style.left = `${bounds.left}px`;
+            element.style.top = `${bounds.top}px`;
+            element.style.width = `${bounds.width}px`;
+            element.style.height = `${bounds.height}px`;
+
+            if (
+                this.focusModeRootWidgetId &&
+                !group.widgetIds.some((id) =>
+                    this.focusModeWidgetIds.has(id)
+                )
+            ) {
+                element.classList.add("focus-dimmed");
+            }
+
+            const header = document.createElement("button");
+            header.type = "button";
+            header.className = "workflow-group-header";
+            header.textContent = group.title;
+            header.title =
+                `${group.title} · ${group.widgetIds.length} widget${group.widgetIds.length === 1 ? "" : "s"}`;
+
+            header.addEventListener("dblclick", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.openSectionDialog(group);
+            });
+
+            header.addEventListener("contextmenu", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.showWorkflowGroupContextMenu(
+                    group,
+                    event.clientX,
+                    event.clientY
+                );
+            });
+
+            element.appendChild(header);
+
+            if (this.connectionLayer) {
+                this.workspace.insertBefore(
+                    element,
+                    this.connectionLayer
+                );
+            } else {
+                this.workspace.appendChild(element);
+            }
+        });
+    }
+
+    updateWorkflowGroupsForWidget(widget) {
+        const affectedGroups =
+            this.workflowGroups.filter((group) =>
+                group.widgetIds.includes(widget?.id)
+            );
+
+        affectedGroups.forEach((group) => {
+            const element = this.workspace
+                ? Array.from(
+                    this.workspace.querySelectorAll(
+                        ".workflow-group"
+                    )
+                ).find(
+                    (candidate) =>
+                        candidate.dataset.groupId ===
+                        group.id
+                )
+                : null;
+            const bounds = this.getWorkflowGroupBounds(group);
+
+            if (!element || !bounds) {
+                this.renderWorkflowGroups();
+                return;
+            }
+
+            element.style.left = `${bounds.left}px`;
+            element.style.top = `${bounds.top}px`;
+            element.style.width = `${bounds.width}px`;
+            element.style.height = `${bounds.height}px`;
+        });
+    }
+
+    async renameWorkflowGroup(group) {
+        if (!group) {
+            return;
+        }
+
+        const name = await this.showPromptDialog({
+            title: "Rename Section",
+            message: "Choose a short label for this workflow stage.",
+            value: group.title,
+            confirmLabel: "Rename"
+        });
+
+        if (name === null || !String(name).trim()) {
+            return;
+        }
+
+        this.recordHistoryState();
+        group.title = String(name).trim();
+        this.renderWorkflowGroups();
+        this.scheduleSave();
+    }
+
+    removeWorkflowGroup(group) {
+        const index = this.workflowGroups.indexOf(group);
+        if (index === -1) {
+            return;
+        }
+
+        this.recordHistoryState();
+        this.workflowGroups.splice(index, 1);
+        this.renderWorkflowGroups();
+        this.scheduleSave();
+    }
+
+    duplicateWorkflowGroup(group) {
+        if (!group) {
+            return;
+        }
+
+        const originals = group.widgetIds
+            .map((id) =>
+                this.widgets.find((widget) => widget.id === id)
+            )
+            .filter(Boolean);
+
+        if (originals.length === 0) {
+            return;
+        }
+
+        this.recordHistoryState();
+
+        const mapping = new Map();
+        const duplicateIds = [];
+        const offset = 54;
+
+        originals.forEach((widget) => {
+            const id = `widget-${this.nextWidgetNumber}`;
+            this.nextWidgetNumber += 1;
+
+            const size = this.getWidgetDisplaySize(widget);
+            const duplicate = new Widget(
+                this,
+                id,
+                `${widget.title} Copy`,
+                widget.type,
+                Math.max(
+                    0,
+                    Math.min(
+                        this.workspaceWidth - size.width,
+                        widget.x + offset
+                    )
+                ),
+                Math.max(
+                    0,
+                    Math.min(
+                        this.workspaceHeight - size.height,
+                        widget.y + offset
+                    )
+                )
+            );
+
+            const data = widget.toJSON();
+            data.status =
+                widget.type === "Start"
+                    ? "idle"
+                    : "waiting";
+            data.runtimeMs = 0;
+            data.memoryKb = 0;
+            data.lastError = "";
+            data.lastRunSignature = null;
+
+            duplicate.applyJSON(data);
+            this.addWidget(duplicate);
+            mapping.set(widget, duplicate);
+            duplicateIds.push(duplicate.id);
+        });
+
+        this.connections
+            .filter((connection) =>
+                mapping.has(connection.sourceWidget) &&
+                mapping.has(connection.targetWidget)
+            )
+            .forEach((connection) => {
+                this.addConnection(
+                    mapping.get(connection.sourceWidget),
+                    mapping.get(connection.targetWidget),
+                    connection.sourcePortId,
+                    connection.targetPortId
+                );
+            });
+
+        const duplicateGroup = {
+            id: `group-${this.nextGroupNumber}`,
+            title: `${group.title} Copy`,
+            widgetIds: duplicateIds
+        };
+
+        this.nextGroupNumber += 1;
+        this.workflowGroups.push(duplicateGroup);
+        this.renderWorkflowGroups();
+        this.scheduleSave();
+
+        const first = mapping.get(originals[0]);
+        if (first) {
+            this.navigateToWidget(first);
+        }
+    }
+
+    showWorkflowGroupContextMenu(
+        group,
+        clientX,
+        clientY
+    ) {
+        this.hideContextMenu();
+
+        const menu = document.createElement("div");
+        menu.className = "widget-context-menu enhanced-context-menu";
+
+        menu.appendChild(
+            this.createContextMenuButton(
+                "Edit Section",
+                () => this.openSectionDialog(group)
+            )
+        );
+
+        menu.appendChild(
+            this.createContextMenuButton(
+                "Rename",
+                () => this.renameWorkflowGroup(group)
+            )
+        );
+
+        menu.appendChild(
+            this.createContextMenuButton(
+                "Duplicate Section",
+                () => this.duplicateWorkflowGroup(group)
+            )
+        );
+
+        menu.appendChild(
+            this.createContextMenuDivider()
+        );
+
+        menu.appendChild(
+            this.createContextMenuButton(
+                "Remove Section",
+                () => this.removeWorkflowGroup(group),
+                { danger: true }
+            )
+        );
+
+        document.body.appendChild(menu);
+        this.contextMenu = menu;
+        this.positionContextMenu(menu, clientX, clientY);
+    }
+
+
     createContextMenuButton(
         label,
         action,
@@ -13875,6 +15505,27 @@ class Board {
                     this.duplicateWidget(
                         widget
                     );
+                }
+            )
+        );
+
+        menu.appendChild(
+            this.createContextMenuButton(
+                "Focus on This Widget",
+                () => {
+                    this.activateFocusMode(
+                        widget
+                    );
+                }
+            )
+        );
+
+        menu.appendChild(
+            this.createContextMenuButton(
+                "Create Section…",
+                () => {
+                    this.selectWidget(widget);
+                    this.openSectionDialog();
                 }
             )
         );
@@ -14654,6 +16305,16 @@ class Board {
         this.updateConnectionTypeState(
             connection
         );
+
+        if (this.focusModeRootWidgetId) {
+            const root = this.widgets.find(
+                (item) => item.id === this.focusModeRootWidgetId
+            );
+            this.focusModeWidgetIds =
+                this.getFocusWidgetIds(root);
+            this.applyFocusModeVisuals();
+        }
+
         this.updateWorkflowMap();
         this.scheduleSave();
 
@@ -14821,6 +16482,15 @@ class Board {
             this.showWidgetProperties(
                 targetWidget
             );
+        }
+
+        if (this.focusModeRootWidgetId) {
+            const root = this.widgets.find(
+                (item) => item.id === this.focusModeRootWidgetId
+            );
+            this.focusModeWidgetIds =
+                this.getFocusWidgetIds(root);
+            this.applyFocusModeVisuals();
         }
 
         this.updateStats();

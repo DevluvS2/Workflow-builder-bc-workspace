@@ -3623,3 +3623,340 @@ body {
         transition: none;
     }
 }
+
+/* =========================================
+   Batch 4: large-workflow organization
+   ========================================= */
+
+.organize-dropdown-content {
+    min-width: 250px;
+}
+
+.alignment-guide {
+    position: absolute;
+    z-index: 99990;
+    pointer-events: none;
+    background: rgb(37 99 235 / 42%);
+}
+
+.alignment-guide-vertical {
+    top: 0;
+    bottom: 0;
+    width: 1px;
+}
+
+.alignment-guide-horizontal {
+    left: 0;
+    right: 0;
+    height: 1px;
+}
+
+.widget.focus-dimmed,
+.workflow-connection-group.focus-dimmed,
+.workflow-group.focus-dimmed {
+    opacity: 0.12;
+}
+
+.widget.focus-root {
+    outline: 2px solid rgb(37 99 235 / 35%);
+    outline-offset: 2px;
+}
+
+.widget,
+.workflow-connection-group,
+.workflow-group {
+    transition:
+        opacity 140ms ease,
+        outline-color 140ms ease;
+}
+
+.widget-navigation-pulse {
+    animation: widget-navigation-pulse 650ms ease-out;
+}
+
+@keyframes widget-navigation-pulse {
+    0% {
+        box-shadow:
+            0 0 0 0 rgb(37 99 235 / 32%),
+            0 4px 10px rgb(0 0 0 / 12%);
+    }
+
+    100% {
+        box-shadow:
+            0 0 0 10px rgb(37 99 235 / 0%),
+            0 4px 10px rgb(0 0 0 / 12%);
+    }
+}
+
+.command-palette-overlay,
+.section-dialog-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 200000;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: min(14vh, 120px) 20px 20px;
+    background: rgb(15 23 42 / 28%);
+    backdrop-filter: blur(1px);
+}
+
+.command-palette {
+    width: min(620px, calc(100vw - 32px));
+    max-height: min(70vh, 620px);
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    overflow: hidden;
+    border: 1px solid var(--ui-border);
+    border-radius: 10px;
+    background: var(--ui-surface);
+    box-shadow: 0 18px 42px rgb(15 23 42 / 22%);
+    font-family: var(--ui-font);
+}
+
+.command-palette-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 11px 13px;
+    border-bottom: 1px solid var(--ui-border-soft);
+    background: var(--ui-surface-soft);
+}
+
+.command-palette-header strong {
+    color: var(--ui-text);
+    font-size: 13px;
+}
+
+.command-palette-header span {
+    color: var(--ui-muted);
+    font-size: 10.5px;
+}
+
+.command-palette-input,
+.section-dialog input[type="text"],
+.section-dialog input[type="search"] {
+    width: 100%;
+    min-height: 38px;
+    padding: 8px 10px;
+    border: 0;
+    border-bottom: 1px solid var(--ui-border-soft);
+    border-radius: 0;
+    outline: none;
+    background: var(--ui-surface);
+    color: var(--ui-text);
+    font-family: var(--ui-font);
+    font-size: 13px;
+}
+
+.command-palette-input:focus,
+.section-dialog input[type="text"]:focus,
+.section-dialog input[type="search"]:focus {
+    box-shadow: inset 0 -2px 0 var(--ui-accent);
+}
+
+.command-palette-results {
+    min-height: 120px;
+    overflow: auto;
+    padding: 6px;
+}
+
+.command-palette-result {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    padding: 8px 9px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--ui-text);
+    text-align: left;
+}
+
+.command-palette-result:hover,
+.command-palette-result.selected {
+    background: var(--ui-surface-muted);
+}
+
+.command-palette-result:disabled {
+    opacity: 0.42;
+    cursor: default;
+}
+
+.command-palette-result-text {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+}
+
+.command-palette-result-text strong {
+    overflow: hidden;
+    font-size: 12px;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.command-palette-result-text small {
+    color: var(--ui-muted);
+    font-size: 10.5px;
+}
+
+.command-palette-empty {
+    padding: 26px 12px;
+    color: var(--ui-muted);
+    font-size: 11.5px;
+    text-align: center;
+}
+
+.workflow-group {
+    position: absolute;
+    z-index: 0;
+    border: 1px dashed rgb(100 116 139 / 42%);
+    border-radius: 11px;
+    background: rgb(248 250 252 / 36%);
+    pointer-events: none;
+}
+
+.workflow-group-header {
+    position: absolute;
+    top: -27px;
+    left: 8px;
+    max-width: calc(100% - 16px);
+    padding: 3px 8px;
+    border: 1px solid var(--ui-border-soft);
+    border-radius: 999px;
+    background: var(--ui-surface);
+    color: var(--ui-text-soft);
+    font-family: var(--ui-font);
+    font-size: 10.5px;
+    font-weight: 650;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+    pointer-events: auto;
+    cursor: default;
+}
+
+.workflow-group-header:hover,
+.workflow-group-header:focus-visible {
+    border-color: var(--ui-border);
+    background: var(--ui-surface-soft);
+    outline: none;
+}
+
+.section-dialog {
+    width: min(520px, calc(100vw - 32px));
+    max-height: min(76vh, 660px);
+    display: grid;
+    grid-template-rows: auto auto auto auto auto minmax(120px, 1fr) auto;
+    overflow: hidden;
+    border: 1px solid var(--ui-border);
+    border-radius: 10px;
+    background: var(--ui-surface);
+    box-shadow: 0 18px 42px rgb(15 23 42 / 22%);
+    font-family: var(--ui-font);
+}
+
+.section-dialog h2 {
+    margin: 0;
+    padding: 13px 14px 4px;
+    color: var(--ui-text);
+    font-size: 15px;
+}
+
+.section-dialog > p {
+    margin: 0;
+    padding: 0 14px 12px;
+    color: var(--ui-muted);
+    font-size: 11.5px;
+    line-height: 1.45;
+}
+
+.section-dialog-label {
+    padding: 8px 14px 5px;
+    color: var(--ui-text-soft);
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.035em;
+}
+
+.section-widget-list {
+    overflow: auto;
+    padding: 6px 10px 10px;
+}
+
+.section-widget-option {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 8px 6px;
+    border-bottom: 1px solid var(--ui-border-soft);
+    cursor: pointer;
+}
+
+.section-widget-option:last-child {
+    border-bottom: 0;
+}
+
+.section-widget-option span {
+    min-width: 0;
+    display: grid;
+    gap: 1px;
+}
+
+.section-widget-option strong {
+    color: var(--ui-text);
+    font-size: 11.5px;
+}
+
+.section-widget-option small {
+    color: var(--ui-muted);
+    font-size: 10px;
+}
+
+.section-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 7px;
+    padding: 10px 12px;
+    border-top: 1px solid var(--ui-border-soft);
+    background: var(--ui-surface-soft);
+}
+
+.section-dialog-actions button {
+    min-height: 32px;
+    padding: 6px 11px;
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-control-radius);
+    background: var(--ui-surface);
+    color: var(--ui-text-soft);
+    font-family: var(--ui-font);
+    font-size: 11.5px;
+    font-weight: 600;
+}
+
+.section-dialog-actions button:hover {
+    background: var(--ui-surface-muted);
+}
+
+.section-dialog-actions button.primary {
+    border-color: var(--ui-accent);
+    background: var(--ui-accent);
+    color: white;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .widget,
+    .workflow-connection-group,
+    .workflow-group {
+        transition: none;
+    }
+
+    .widget-navigation-pulse {
+        animation: none;
+    }
+}

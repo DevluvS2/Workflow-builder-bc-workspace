@@ -1305,6 +1305,9 @@ class Widget {
             this.board.updateConnectionsForWidget(
                 this
             );
+            this.board.updateWorkflowGroupsForWidget(
+                this
+            );
             this.board.updateWorkflowMap();
             this.board.scheduleSave();
         }
@@ -1645,6 +1648,23 @@ class Widget {
             pointer.y -
             this.dragOffsetY;
 
+        const snappedPosition =
+            this.board.getSnappedWidgetPosition(
+                this,
+                this.x,
+                this.y,
+                {
+                    disable: event.altKey
+                }
+            );
+
+        this.x = snappedPosition.x;
+        this.y = snappedPosition.y;
+
+        this.board.showAlignmentGuides(
+            snappedPosition
+        );
+
         const width =
             this.element
                 ? this.element.offsetWidth
@@ -1675,6 +1695,10 @@ class Widget {
 
         this.updatePosition();
 
+        this.board.updateWorkflowGroupsForWidget(
+            this
+        );
+
         this.board.updateConnectionsForWidget(
             this
         );
@@ -1704,6 +1728,8 @@ class Widget {
             );
         }
 
+        this.board.clearAlignmentGuides();
+        this.board.renderWorkflowGroups();
         this.board.updateStats();
         this.board.scheduleSave();
 
