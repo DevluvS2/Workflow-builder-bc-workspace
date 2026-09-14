@@ -30,6 +30,11 @@ class Connection {
 
         this.element = null;
 
+        /* Session-only transfer inspection metadata. */
+        this.lastValue = undefined;
+        this.lastUpdatedAt = null;
+        this.lastRunId = null;
+
         this.hitElement = null;
         this.groupElement = null;
     }

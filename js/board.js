@@ -30,10 +30,11 @@ class Board {
 
         /* Custom in-app dialog state. */
         this.activeDialog = null;
+        this.activeDataInspector = null;
 
         /* Guided interface tutorial. */
         this.tutorialStorageKey =
-            "workflowBuilderInterfaceTutorialSeenV2";
+            "workflowBuilderInterfaceTutorialSeenV3";
         this.tutorialActive = false;
         this.tutorialStepIndex = 0;
         this.tutorialSteps = [];
@@ -601,6 +602,7 @@ class Board {
             ["canvas", "Canvas & Navigation"],
             ["widgets", "Widgets & Connections"],
             ["io", "Inputs & Outputs"],
+            ["debug", "Data & Debugging"],
             ["properties", "Properties Panel"],
             ["scripts", "Scripts & Languages"],
             ["decisions", "Decision Nodes"],
@@ -3202,6 +3204,449 @@ class Board {
         this.selectedConnection = null;
     }
 
+    closeDataPreview() {
+        if (!this.activeDataInspector) {
+            return;
+        }
+
+        this.activeDataInspector.remove();
+        this.activeDataInspector = null;
+    }
+
+    getDataPreviewSummary(value) {
+        if (Array.isArray(value)) {
+            return `${value.length} item${value.length === 1 ? "" : "s"}`;
+        }
+
+        if (
+            value &&
+            typeof value === "object"
+        ) {
+            const count = Object.keys(value).length;
+            return `${count} field${count === 1 ? "" : "s"}`;
+        }
+
+        if (typeof value === "string") {
+            return `${value.length} character${value.length === 1 ? "" : "s"}`;
+        }
+
+        return typeof value;
+    }
+
+    buildDataPreviewContent(value) {
+        const container =
+            document.createElement("div");
+        container.className =
+            "data-inspector-content";
+
+        const makeCellText = (cellValue) => {
+            if (
+                cellValue &&
+                typeof cellValue === "object"
+            ) {
+                try {
+                    return JSON.stringify(cellValue);
+                } catch (error) {
+                    return String(cellValue);
+                }
+            }
+
+            return String(cellValue ?? "");
+        };
+
+        if (
+            Array.isArray(value) &&
+            value.length > 0 &&
+            value.every(
+                (item) =>
+                    item &&
+                    typeof item === "object" &&
+                    !Array.isArray(item)
+            )
+        ) {
+            const columns = [];
+            value.slice(0, 10).forEach(
+                (row) => {
+                    Object.keys(row).forEach(
+                        (key) => {
+                            if (
+                                !columns.includes(key) &&
+                                columns.length < 6
+                            ) {
+                                columns.push(key);
+                            }
+                        }
+                    );
+                }
+            );
+
+            const tableWrap =
+                document.createElement("div");
+            tableWrap.className =
+                "data-preview-table-wrap";
+
+            const table =
+                document.createElement("table");
+            table.className =
+                "data-preview-table";
+
+            const head =
+                document.createElement("thead");
+            const headRow =
+                document.createElement("tr");
+
+            columns.forEach(
+                (column) => {
+                    const th =
+                        document.createElement("th");
+                    th.textContent = column;
+                    headRow.appendChild(th);
+                }
+            );
+
+            head.appendChild(headRow);
+            table.appendChild(head);
+
+            const body =
+                document.createElement("tbody");
+
+            value.slice(0, 10).forEach(
+                (row) => {
+                    const tr =
+                        document.createElement("tr");
+
+                    columns.forEach(
+                        (column) => {
+                            const td =
+                                document.createElement("td");
+                            td.textContent =
+                                makeCellText(row[column]);
+                            tr.appendChild(td);
+                        }
+                    );
+
+                    body.appendChild(tr);
+                }
+            );
+
+            table.appendChild(body);
+            tableWrap.appendChild(table);
+            container.appendChild(tableWrap);
+        } else if (Array.isArray(value)) {
+            const table =
+                document.createElement("table");
+            table.className =
+                "data-preview-table data-preview-indexed-table";
+
+            const body =
+                document.createElement("tbody");
+
+            value.slice(0, 12).forEach(
+                (item, index) => {
+                    const tr =
+                        document.createElement("tr");
+                    const indexCell =
+                        document.createElement("th");
+                    indexCell.textContent =
+                        String(index);
+                    const valueCell =
+                        document.createElement("td");
+                    valueCell.textContent =
+                        makeCellText(item);
+                    tr.appendChild(indexCell);
+                    tr.appendChild(valueCell);
+                    body.appendChild(tr);
+                }
+            );
+
+            table.appendChild(body);
+            container.appendChild(table);
+        } else if (
+            value &&
+            typeof value === "object"
+        ) {
+            const pre =
+                document.createElement("pre");
+            pre.className =
+                "data-preview-code";
+
+            try {
+                pre.textContent =
+                    JSON.stringify(
+                        value,
+                        null,
+                        2
+                    );
+            } catch (error) {
+                pre.textContent = String(value);
+            }
+
+            container.appendChild(pre);
+        } else {
+            const pre =
+                document.createElement("pre");
+            pre.className =
+                "data-preview-code data-preview-scalar";
+            pre.textContent =
+                value === "" ||
+                value === null ||
+                value === undefined
+                    ? "<empty>"
+                    : String(value);
+            container.appendChild(pre);
+        }
+
+        return container;
+    }
+
+    showDataPreview({
+        widget = null,
+        port = null,
+        direction = "",
+        title = "Data Preview",
+        value = undefined,
+        dataType = null,
+        subtitle = ""
+    } = {}) {
+        this.closeDataPreview();
+
+        const previewValue =
+            value !== undefined
+                ? value
+                : port
+                    ? port.value
+                    : "";
+
+        const normalizedType =
+            dataType ||
+            (port
+                ? this.getPortDataType(port)
+                : "Any");
+
+        const overlay =
+            document.createElement("div");
+        overlay.className =
+            "data-inspector-overlay";
+
+        const panel =
+            document.createElement("section");
+        panel.className =
+            "data-inspector";
+        panel.setAttribute("role", "dialog");
+        panel.setAttribute("aria-modal", "true");
+        panel.setAttribute("aria-label", title);
+
+        const header =
+            document.createElement("div");
+        header.className =
+            "data-inspector-header";
+
+        const headingWrap =
+            document.createElement("div");
+        headingWrap.className =
+            "data-inspector-heading";
+
+        const heading =
+            document.createElement("h2");
+        heading.textContent = title;
+
+        const meta =
+            document.createElement("div");
+        meta.className =
+            "data-inspector-meta";
+        meta.textContent =
+            `${normalizedType} · ${this.getDataPreviewSummary(previewValue)}` +
+            (subtitle ? ` · ${subtitle}` : "");
+
+        headingWrap.appendChild(heading);
+        headingWrap.appendChild(meta);
+
+        const closeButton =
+            document.createElement("button");
+        closeButton.type = "button";
+        closeButton.className =
+            "data-inspector-close";
+        closeButton.textContent = "×";
+        closeButton.title = "Close preview";
+        closeButton.setAttribute(
+            "aria-label",
+            "Close data preview"
+        );
+
+        header.appendChild(headingWrap);
+        header.appendChild(closeButton);
+
+        const body =
+            document.createElement("div");
+        body.className =
+            "data-inspector-body";
+        body.appendChild(
+            this.buildDataPreviewContent(
+                previewValue
+            )
+        );
+
+        const footer =
+            document.createElement("div");
+        footer.className =
+            "data-inspector-footer";
+
+        if (widget && port) {
+            const pinButton =
+                document.createElement("button");
+            pinButton.type = "button";
+            pinButton.className =
+                "data-inspector-pin";
+
+            const updatePinLabel = () => {
+                pinButton.textContent =
+                    port.pinned
+                        ? "Unpin from collapsed widget"
+                        : "Pin on collapsed widget";
+            };
+
+            updatePinLabel();
+
+            pinButton.addEventListener(
+                "click",
+                () => {
+                    this.recordHistoryState();
+                    port.pinned = !port.pinned;
+                    widget.refreshContent();
+                    this.scheduleSave();
+                    updatePinLabel();
+                }
+            );
+
+            footer.appendChild(pinButton);
+        }
+
+        const closeFooterButton =
+            document.createElement("button");
+        closeFooterButton.type = "button";
+        closeFooterButton.className =
+            "data-inspector-done";
+        closeFooterButton.textContent = "Done";
+        footer.appendChild(closeFooterButton);
+
+        const close = () => {
+            document.removeEventListener(
+                "keydown",
+                keyHandler,
+                true
+            );
+            overlay.remove();
+            if (
+                this.activeDataInspector ===
+                overlay
+            ) {
+                this.activeDataInspector = null;
+            }
+        };
+
+        closeButton.addEventListener(
+            "click",
+            close
+        );
+        closeFooterButton.addEventListener(
+            "click",
+            close
+        );
+        overlay.addEventListener(
+            "pointerdown",
+            (event) => {
+                if (event.target === overlay) {
+                    close();
+                }
+            }
+        );
+
+        const keyHandler = (event) => {
+            if (
+                event.key === "Escape" &&
+                this.activeDataInspector === overlay
+            ) {
+                event.preventDefault();
+                close();
+                document.removeEventListener(
+                    "keydown",
+                    keyHandler,
+                    true
+                );
+            }
+        };
+
+        document.addEventListener(
+            "keydown",
+            keyHandler,
+            true
+        );
+
+        panel.appendChild(header);
+        panel.appendChild(body);
+        panel.appendChild(footer);
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+        this.activeDataInspector = overlay;
+
+        requestAnimationFrame(
+            () => {
+                overlay.classList.add("visible");
+                closeButton.focus();
+            }
+        );
+    }
+
+    showWidgetFailureDetails(widget) {
+        if (!widget) {
+            return;
+        }
+
+        const errorText =
+            widget.lastError ||
+            "No failure details are available for this widget.";
+
+        const lower =
+            errorText.toLowerCase();
+
+        let suggestion =
+            "Check the widget inputs, script/source, and data types, then run this node again.";
+
+        if (
+            lower.includes("convert") ||
+            lower.includes("type") ||
+            lower.includes("parse")
+        ) {
+            suggestion =
+                "This looks like a data-type problem. Inspect the incoming value and compare the input/output types.";
+        } else if (
+            lower.includes("required") ||
+            lower.includes("missing") ||
+            lower.includes("input")
+        ) {
+            suggestion =
+                "This looks like a missing-input problem. Check Inputs & Outputs and confirm every required input has a value or source.";
+        } else if (
+            lower.includes("expression") ||
+            lower.includes("syntax") ||
+            lower.includes("script")
+        ) {
+            suggestion =
+                "This looks like a script/expression problem. Open Execution and check the Source field and available input variable names.";
+        } else if (lower.includes("cycle")) {
+            suggestion =
+                "This workflow contains a dependency cycle. Remove or reroute a connection so execution has a clear direction.";
+        }
+
+        this.showMessageDialog({
+            title: `Why ${widget.title} failed`,
+            message:
+                `${errorText}\n\nSuggested next step: ${suggestion}`,
+            tone: "error",
+            confirmLabel: "Close"
+        });
+    }
+
     showNoSelectionMessage() {
         if (!this.propertiesPanelContent) {
             return;
@@ -3794,6 +4239,38 @@ class Board {
             )
             .forEach(
             (connection) => {
+                connection.lastValue =
+                    output.value;
+                connection.lastUpdatedAt =
+                    Date.now();
+                connection.lastRunId =
+                    this.isWorkflowRunning
+                        ? this.executionRunId
+                        : connection.lastRunId;
+
+                if (connection.element) {
+                    connection.element.classList.add(
+                        "connection-transfer-active"
+                    );
+
+                    const transferStamp =
+                        connection.lastUpdatedAt;
+
+                    window.setTimeout(
+                        () => {
+                            if (
+                                connection.lastUpdatedAt ===
+                                transferStamp
+                            ) {
+                                connection.element?.classList.remove(
+                                    "connection-transfer-active"
+                                );
+                            }
+                        },
+                        650
+                    );
+                }
+
                 const targetInput =
                     connection.targetWidget
                         .getInputById(
@@ -6145,10 +6622,32 @@ class Board {
             [
                 "Current value",
                 Widget.formatValue(
-                    sourcePort
-                        ? sourcePort.value
-                        : ""
+                    connection.lastValue !== undefined
+                        ? connection.lastValue
+                        : sourcePort
+                            ? sourcePort.value
+                            : ""
                 )
+            ],
+            [
+                "Path state",
+                this.getConnectionBranchState(
+                    connection
+                )
+            ],
+            [
+                "Last transfer",
+                connection.lastUpdatedAt
+                    ? new Date(
+                        connection.lastUpdatedAt
+                    ).toLocaleTimeString()
+                    : "Not transferred yet"
+            ],
+            [
+                "Last run",
+                connection.lastRunId
+                    ? `Run #${connection.lastRunId}`
+                    : "—"
             ]
         ];
 
@@ -6189,6 +6688,34 @@ class Board {
             document.createElement("div");
         actions.className =
             "property-actions stacked-property-actions";
+
+        const inspectButton =
+            document.createElement("button");
+        inspectButton.type = "button";
+        inspectButton.textContent =
+            "Preview Transferred Data";
+        inspectButton.addEventListener(
+            "click",
+            () => {
+                this.showDataPreview({
+                    title: `${connection.sourceWidget.title} → ${connection.targetWidget.title}`,
+                    value:
+                        connection.lastValue !== undefined
+                            ? connection.lastValue
+                            : sourcePort
+                                ? sourcePort.value
+                                : "",
+                    dataType:
+                        sourcePort
+                            ? this.getPortDataType(sourcePort)
+                            : "Any",
+                    subtitle:
+                        connection.lastUpdatedAt
+                            ? `updated ${new Date(connection.lastUpdatedAt).toLocaleTimeString()}`
+                            : "not transferred yet"
+                });
+            }
+        );
 
         const sourceButton =
             document.createElement("button");
@@ -6234,6 +6761,7 @@ class Board {
             }
         );
 
+        actions.appendChild(inspectButton);
         actions.appendChild(sourceButton);
         actions.appendChild(targetButton);
         actions.appendChild(deleteButton);
@@ -7779,6 +8307,7 @@ class Board {
             canvas: "Canvas & Navigation",
             widgets: "Widgets & Connections",
             io: "Inputs & Outputs",
+            debug: "Data & Debugging",
             properties: "Properties Panel",
             scripts: "Scripts & Languages",
             decisions: "Decision Nodes",
@@ -7914,7 +8443,7 @@ class Board {
                 text: "The small header dot shows status. Hover or focus it for details. Use the chevron to collapse a widget while keeping its ports available."
             },
             {
-                sections: ["widgets", "io", "decisions"],
+                sections: ["widgets", "io", "decisions", "debug"],
                 title: "Connections",
                 target: '[data-tour="workspace"]',
                 text: "Drag an output circle to an input circle. Green is compatible, amber needs conversion, and red is invalid."
@@ -7930,6 +8459,20 @@ class Board {
                 title: "Workflow Map",
                 target: '[data-tour="workflow-map"]',
                 text: "Click the map to jump. Drag anywhere on it, or drag the red box, to move around the full canvas."
+            },
+            {
+                sections: ["debug", "io", "widgets"],
+                title: "Inspect values",
+                target: ".widget",
+                prepare: showProps(),
+                text: "Click a value inside a widget to preview arrays or JSON. Pin important values so they stay visible when the widget is collapsed."
+            },
+            {
+                sections: ["debug", "run"],
+                title: "Debug failures",
+                target: ".widget",
+                prepare: showProps(),
+                text: "A failed widget shows an ! indicator. Click it for the error and a suggested next step. Changed results show ↻ until the widget runs again."
             },
             {
                 sections: ["properties", "io", "scripts"],
@@ -10731,6 +11274,8 @@ class Board {
                         executionWidget
                     );
 
+                executionWidget.markRunFresh();
+
                 executionWidget.setStatus(
                     "finished",
                     runtime,
@@ -12644,6 +13189,13 @@ class Board {
             connection
         );
 
+        if (
+            typeof targetWidget.markStale ===
+            "function"
+        ) {
+            targetWidget.markStale();
+        }
+
         if (!this.isWorkflowRunning) {
             this.clearBranchExecutionState({
                 clearDecisionResults: true
@@ -12800,6 +13352,13 @@ class Board {
                 targetWidget,
                 targetPortId
             );
+
+            if (
+                typeof targetWidget.markStale ===
+                "function"
+            ) {
+                targetWidget.markStale();
+            }
         }
 
         if (wasSelected) {

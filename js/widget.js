@@ -18,6 +18,7 @@ class Widget {
         this.statusIndicatorElement = null;
         this.noteIndicatorElement = null;
         this.errorIndicatorElement = null;
+        this.staleIndicatorElement = null;
         this.collapseButtonElement = null;
 
         this.inputPortElements = new Map();
@@ -52,6 +53,7 @@ class Widget {
         this.runtimeMs = 0;
         this.memoryKb = 0;
         this.lastError = "";
+        this.lastRunSignature = null;
 
         /*
          * Decision-node branching configuration.
@@ -184,7 +186,8 @@ class Widget {
                 dataType: "Any",
                 value: "",
                 manualValue: "",
-                required: true
+                required: true,
+                pinned: false
             };
         }
 
@@ -192,7 +195,8 @@ class Widget {
             id,
             name,
             dataType: "Any",
-            value: ""
+            value: "",
+            pinned: false
         };
     }
 
@@ -263,7 +267,10 @@ class Widget {
                 port &&
                 typeof port.required === "boolean"
                     ? port.required
-                    : true
+                    : true,
+
+            pinned:
+                Boolean(port && port.pinned)
         };
     }
 
@@ -293,7 +300,10 @@ class Widget {
             value:
                 port && port.value !== undefined
                     ? port.value
-                    : ""
+                    : "",
+
+            pinned:
+                Boolean(port && port.pinned)
         };
     }
 
@@ -343,6 +353,16 @@ class Widget {
         if (data.notes !== undefined) {
             this.notes =
                 String(data.notes || "");
+        }
+
+        if (
+            data.lastRunSignature !==
+            undefined
+        ) {
+            this.lastRunSignature =
+                data.lastRunSignature
+                    ? String(data.lastRunSignature)
+                    : null;
         }
 
         if (data.status) {
@@ -519,6 +539,22 @@ class Widget {
             "Widget error"
         );
 
+        const staleIndicator =
+            document.createElement("span");
+
+        staleIndicator.className =
+            "widget-header-indicator widget-stale-indicator";
+        staleIndicator.textContent = "↻";
+        staleIndicator.tabIndex = 0;
+        staleIndicator.setAttribute(
+            "role",
+            "img"
+        );
+        staleIndicator.setAttribute(
+            "aria-label",
+            "Results are out of date"
+        );
+
         const statusIndicator =
             document.createElement("span");
 
@@ -557,11 +593,48 @@ class Widget {
             }
         );
 
+        const openFailureDetails = (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (this.lastError) {
+                this.board.showWidgetFailureDetails(this);
+            }
+        };
+
+        errorIndicator.tabIndex = 0;
+        errorIndicator.setAttribute(
+            "role",
+            "button"
+        );
+        errorIndicator.title =
+            "Why did this widget fail?";
+        errorIndicator.addEventListener(
+            "click",
+            openFailureDetails
+        );
+        errorIndicator.addEventListener(
+            "keydown",
+            (event) => {
+                if (
+                    event.key === "Enter" ||
+                    event.key === " "
+                ) {
+                    openFailureDetails(event);
+                }
+            }
+        );
+
+        staleIndicator.title =
+            "Inputs or settings changed since the last successful run";
+
         headerActions.appendChild(
             noteIndicator
         );
         headerActions.appendChild(
             errorIndicator
+        );
+        headerActions.appendChild(
+            staleIndicator
         );
         headerActions.appendChild(
             statusIndicator
@@ -617,6 +690,7 @@ class Widget {
         this.statusIndicatorElement = statusIndicator;
         this.noteIndicatorElement = noteIndicator;
         this.errorIndicatorElement = errorIndicator;
+        this.staleIndicatorElement = staleIndicator;
         this.collapseButtonElement = collapseButton;
 
         this.refreshContent();
@@ -666,6 +740,16 @@ class Widget {
         if (this.noteIndicatorElement) {
             this.noteIndicatorElement.hidden =
                 this.notes.trim() === "";
+        }
+
+        if (this.staleIndicatorElement) {
+            const stale = this.isStale();
+            this.staleIndicatorElement.hidden =
+                !stale;
+            this.element.classList.toggle(
+                "widget-stale",
+                stale
+            );
         }
 
         if (
@@ -822,6 +906,12 @@ class Widget {
                         port.value === undefined
                     );
 
+                if (port.pinned && hasValue) {
+                    row.classList.add(
+                        "pinned-value"
+                    );
+                }
+
                 let rowText =
                     `${prefix} ${port.name}`;
 
@@ -836,6 +926,58 @@ class Widget {
                 }
 
                 text.textContent = rowText;
+
+                if (hasValue) {
+                    text.classList.add(
+                        "widget-io-preview-enabled"
+                    );
+                    text.tabIndex = 0;
+                    text.setAttribute(
+                        "role",
+                        "button"
+                    );
+                    text.title =
+                        `Preview ${port.name}`;
+
+                    const openPreview = (event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        this.board.showDataPreview({
+                            widget: this,
+                            port,
+                            direction,
+                            title: `${this.title} · ${port.name}`
+                        });
+                    };
+
+                    /*
+                     * The widget itself starts dragging on pointerdown.
+                     * Stop pointerdown here so clicking a value opens the
+                     * Data Preview instead of selecting/moving the widget.
+                     */
+                    text.addEventListener(
+                        "pointerdown",
+                        (event) => {
+                            event.stopPropagation();
+                        }
+                    );
+
+                    text.addEventListener(
+                        "click",
+                        openPreview
+                    );
+                    text.addEventListener(
+                        "keydown",
+                        (event) => {
+                            if (
+                                event.key === "Enter" ||
+                                event.key === " "
+                            ) {
+                                openPreview(event);
+                            }
+                        }
+                    );
+                }
 
                 const portButton =
                     document.createElement(
@@ -2022,6 +2164,71 @@ class Widget {
         return text;
     }
 
+    getExecutionSignature() {
+        const payload = {
+            type: this.type,
+            language: this.language,
+            source: this.source,
+            executionDelayMs: this.executionDelayMs,
+            decisionExpression: this.decisionExpression,
+            decisionTrueOutputId: this.decisionTrueOutputId,
+            decisionFalseOutputId: this.decisionFalseOutputId,
+            decisionPayloadMode: this.decisionPayloadMode,
+            inputs: this.inputs.map(
+                (port) => ({
+                    id: port.id,
+                    name: port.name,
+                    dataType: Widget.normalizeDataType(
+                        port.dataType
+                    ),
+                    value: port.value,
+                    manualValue: port.manualValue,
+                    required: port.required
+                })
+            ),
+            outputs: this.outputs.map(
+                (port) => ({
+                    id: port.id,
+                    name: port.name,
+                    dataType: Widget.normalizeDataType(
+                        port.dataType
+                    ),
+                    value: port.value
+                })
+            )
+        };
+
+        try {
+            return JSON.stringify(payload);
+        } catch (error) {
+            return String(Date.now());
+        }
+    }
+
+    markRunFresh() {
+        this.lastRunSignature =
+            this.getExecutionSignature();
+        this.refreshContent();
+    }
+
+    isStale() {
+        return (
+            Boolean(this.lastRunSignature) &&
+            this.lastRunSignature !==
+                this.getExecutionSignature()
+        );
+    }
+
+    markStale() {
+        if (!this.lastRunSignature) {
+            return;
+        }
+
+        this.lastRunSignature =
+            `__stale__${Date.now()}`;
+        this.refreshContent();
+    }
+
     toJSON() {
         return {
             id: this.id,
@@ -2044,7 +2251,9 @@ class Widget {
                         manualValue:
                             port.manualValue,
                         required:
-                            port.required
+                            port.required,
+                        pinned:
+                            Boolean(port.pinned)
                     })
                 ),
 
@@ -2057,7 +2266,9 @@ class Widget {
                             Widget.normalizeDataType(
                                 port.dataType
                             ),
-                        value: port.value
+                        value: port.value,
+                        pinned:
+                            Boolean(port.pinned)
                     })
                 ),
 
@@ -2069,6 +2280,9 @@ class Widget {
 
             notes:
                 this.notes,
+
+            lastRunSignature:
+                this.lastRunSignature,
 
             status:
                 this.status,

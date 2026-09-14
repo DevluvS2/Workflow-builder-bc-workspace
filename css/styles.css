@@ -2791,3 +2791,458 @@ button {
     color: #1f2937;
     font: inherit;
 }
+
+/* =========================================================
+   Batch 2 — unified design system + data inspection
+   ========================================================= */
+
+:root {
+    --ui-font:
+        Inter,
+        ui-sans-serif,
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
+
+    --ui-text: #1f2937;
+    --ui-text-soft: #475569;
+    --ui-muted: #64748b;
+    --ui-border: #cbd5e1;
+    --ui-border-soft: #e2e8f0;
+    --ui-surface: #ffffff;
+    --ui-surface-soft: #f8fafc;
+    --ui-surface-muted: #f1f5f9;
+    --ui-canvas-shell: #e5e7eb;
+    --ui-toolbar: #1f2937;
+    --ui-toolbar-hover: #374151;
+    --ui-accent: #2563eb;
+    --ui-accent-soft: rgb(37 99 235 / 12%);
+    --ui-danger: #b91c1c;
+    --ui-warning: #a16207;
+    --ui-success: #166534;
+    --ui-radius: 7px;
+    --ui-control-radius: 5px;
+    --ui-shadow: 0 4px 12px rgb(15 23 42 / 10%);
+}
+
+body,
+button,
+input,
+select,
+textarea {
+    font-family: var(--ui-font);
+}
+
+body {
+    color: var(--ui-text);
+}
+
+/* Keep every major surface in the same slate/white family. */
+.board {
+    background: var(--ui-surface-muted);
+}
+
+.menu-bar,
+.stats-bar {
+    background: var(--ui-toolbar);
+    font-family: var(--ui-font);
+}
+
+.menu-bar button,
+.dropdown-button,
+.history-icon-button,
+.run-control-button {
+    font-family: var(--ui-font);
+}
+
+.menu-bar button:hover,
+.dropdown-button:hover,
+.history-icon-button:hover:not(:disabled),
+.run-control-button:hover:not(:disabled) {
+    background-color: var(--ui-toolbar-hover) !important;
+}
+
+.side-panel {
+    background: var(--ui-surface-soft);
+    border-color: var(--ui-border);
+}
+
+.panel-header {
+    min-height: 42px;
+    padding: 9px 11px;
+    border-bottom: 1px solid var(--ui-border);
+    background: var(--ui-surface);
+    color: var(--ui-text);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.panel-header button {
+    padding: 5px 8px;
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-control-radius);
+    background: var(--ui-surface-soft);
+    color: var(--ui-text-soft);
+    font-size: 12px;
+}
+
+.panel-header button:hover {
+    background: var(--ui-surface-muted);
+}
+
+.panel-content {
+    padding: 10px;
+}
+
+.panel-description {
+    color: var(--ui-muted);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.widget-library-button {
+    margin-bottom: 7px;
+    padding: 9px 10px;
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-control-radius);
+    background: var(--ui-surface);
+    color: var(--ui-text);
+    font-size: 12.5px;
+    font-weight: 600;
+    box-shadow: none;
+}
+
+.widget-library-button:hover,
+.widget-library-button:focus-visible {
+    border-color: #94a3b8;
+    background: var(--ui-surface-soft);
+}
+
+.dropdown-content,
+.widget-context-menu {
+    border-color: var(--ui-border);
+    background: var(--ui-surface);
+    color: var(--ui-text);
+    font-family: var(--ui-font);
+    box-shadow: var(--ui-shadow);
+}
+
+.dropdown-content button,
+.widget-context-menu button,
+.dropdown-check-item {
+    font-family: var(--ui-font);
+    font-size: 12.5px;
+}
+
+/* Properties, forms and execution console share the same controls. */
+.property-group,
+.io-property-card,
+.execution-console,
+.workflow-map,
+.app-dialog,
+.data-inspector {
+    border-color: var(--ui-border);
+    font-family: var(--ui-font);
+}
+
+.property-group-toggle,
+.property-readout,
+.io-property-card,
+.execution-console-header,
+.workflow-map-title {
+    background: var(--ui-surface-soft);
+}
+
+.property-row input,
+.property-row select,
+.property-row textarea,
+.io-property-card input,
+.io-property-card select,
+[data-tour="properties-advanced"] textarea {
+    border-color: var(--ui-border);
+    border-radius: var(--ui-control-radius);
+    background: var(--ui-surface);
+    color: var(--ui-text);
+    font-family: var(--ui-font);
+}
+
+.property-actions button,
+.decision-test-button,
+.execution-console-action,
+.execution-console-toggle {
+    border-color: var(--ui-border);
+    border-radius: var(--ui-control-radius);
+    background: var(--ui-surface);
+    color: var(--ui-text-soft);
+    font-family: var(--ui-font);
+}
+
+/* ---------------- Data previews ---------------- */
+.widget-io-preview-enabled {
+    cursor: zoom-in;
+    border-radius: 3px;
+}
+
+.widget-io-preview-enabled:hover,
+.widget-io-preview-enabled:focus-visible {
+    background: var(--ui-accent-soft);
+    outline: none;
+}
+
+.widget-io-preview-enabled:focus-visible {
+    box-shadow: 0 0 0 2px rgb(37 99 235 / 20%);
+}
+
+/* A pinned value remains readable even when the rest of the widget is collapsed. */
+.widget.collapsed .widget-io-row.pinned-value .widget-io-text {
+    visibility: visible;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    color: var(--ui-text-soft);
+    font-size: 10.5px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.widget.collapsed .widget-io-row.pinned-value {
+    min-height: 20px;
+}
+
+.widget-header-indicator.widget-stale-indicator {
+    color: var(--ui-muted);
+    cursor: help;
+}
+
+.widget-header-indicator.widget-stale-indicator[hidden] {
+    display: none;
+}
+
+.widget-stale .widget-title-text::after {
+    content: "";
+}
+
+.widget-error-indicator {
+    cursor: help;
+    border-radius: 3px;
+}
+
+.widget-error-indicator:focus-visible,
+.widget-stale-indicator:focus-visible {
+    outline: 2px solid var(--ui-accent);
+    outline-offset: 2px;
+}
+
+/* Brief, subtle indication of the data path that just transferred a value. */
+.workflow-connection.connection-transfer-active {
+    stroke: var(--ui-accent);
+    stroke-width: 4;
+    opacity: 1;
+    filter: none;
+    transition:
+        stroke 120ms ease,
+        stroke-width 120ms ease,
+        opacity 160ms ease;
+}
+
+/* Branch state stays readable without adding another saturated color family. */
+.workflow-connection.connection-branch-active {
+    stroke: #475569;
+    stroke-width: 3.5;
+    opacity: 1;
+    filter: none;
+}
+
+.workflow-map-connection.branch-active {
+    stroke: #475569;
+    opacity: 1;
+}
+
+/* ---------------- Data Inspector ---------------- */
+.data-inspector-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1300;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgb(15 23 42 / 28%);
+    opacity: 0;
+    transition: opacity 120ms ease;
+}
+
+.data-inspector-overlay.visible {
+    opacity: 1;
+}
+
+.data-inspector {
+    width: min(720px, calc(100vw - 48px));
+    max-height: min(640px, calc(100vh - 48px));
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    overflow: hidden;
+    border: 1px solid var(--ui-border);
+    border-radius: 9px;
+    background: var(--ui-surface);
+    box-shadow: 0 18px 48px rgb(15 23 42 / 20%);
+}
+
+.data-inspector-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 13px 14px 11px;
+    border-bottom: 1px solid var(--ui-border-soft);
+    background: var(--ui-surface-soft);
+}
+
+.data-inspector-heading {
+    min-width: 0;
+}
+
+.data-inspector-heading h2 {
+    margin: 0;
+    color: var(--ui-text);
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.data-inspector-meta {
+    margin-top: 3px;
+    color: var(--ui-muted);
+    font-size: 11px;
+}
+
+.data-inspector-close {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--ui-control-radius);
+    background: transparent;
+    color: var(--ui-muted);
+    font-size: 20px;
+    line-height: 1;
+}
+
+.data-inspector-close:hover,
+.data-inspector-close:focus-visible {
+    border-color: var(--ui-border);
+    background: var(--ui-surface);
+    color: var(--ui-text);
+}
+
+.data-inspector-body {
+    min-height: 130px;
+    overflow: auto;
+    padding: 14px;
+}
+
+.data-inspector-content {
+    min-width: 0;
+}
+
+.data-preview-code {
+    margin: 0;
+    padding: 11px 12px;
+    overflow: auto;
+    border: 1px solid var(--ui-border-soft);
+    border-radius: var(--ui-control-radius);
+    background: var(--ui-surface-soft);
+    color: var(--ui-text);
+    font-family:
+        ui-monospace,
+        SFMono-Regular,
+        Menlo,
+        Consolas,
+        monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.data-preview-scalar {
+    font-size: 14px;
+}
+
+.data-preview-table-wrap {
+    max-width: 100%;
+    overflow: auto;
+}
+
+.data-preview-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11.5px;
+}
+
+.data-preview-table th,
+.data-preview-table td {
+    max-width: 220px;
+    padding: 7px 8px;
+    border: 1px solid var(--ui-border-soft);
+    text-align: left;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+}
+
+.data-preview-table th {
+    background: var(--ui-surface-soft);
+    color: var(--ui-text-soft);
+    font-weight: 700;
+}
+
+.data-preview-indexed-table th {
+    width: 48px;
+    color: var(--ui-muted);
+    font-weight: 600;
+}
+
+.data-inspector-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 10px 14px;
+    border-top: 1px solid var(--ui-border-soft);
+    background: var(--ui-surface-soft);
+}
+
+.data-inspector-pin,
+.data-inspector-done {
+    padding: 7px 10px;
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-control-radius);
+    background: var(--ui-surface);
+    color: var(--ui-text-soft);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.data-inspector-done {
+    border-color: var(--ui-accent);
+    background: var(--ui-accent);
+    color: white;
+}
+
+.data-inspector-pin:hover,
+.data-inspector-pin:focus-visible {
+    background: var(--ui-surface-muted);
+}
+
+.data-inspector-done:hover,
+.data-inspector-done:focus-visible {
+    filter: brightness(0.96);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .data-inspector-overlay,
+    .workflow-connection.connection-transfer-active {
+        transition: none;
+    }
+}
