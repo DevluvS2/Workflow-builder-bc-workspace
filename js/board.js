@@ -31,6 +31,20 @@ class Board {
         /* Custom in-app dialog state. */
         this.activeDialog = null;
 
+        /* Guided interface tutorial. */
+        this.tutorialStorageKey =
+            "workflowBuilderInterfaceTutorialSeenV1";
+        this.tutorialActive = false;
+        this.tutorialStepIndex = 0;
+        this.tutorialSteps = [];
+        this.tutorialLayer = null;
+        this.tutorialHighlight = null;
+        this.tutorialCard = null;
+        this.tutorialResizeHandler = null;
+        this.tutorialPreviousUiState = null;
+        this.tutorialSectionId = "full";
+        this.tutorialSectionLabel = "Full Tutorial";
+
         this.leftPanelVisible = true;
         this.rightPanelVisible = true;
 
@@ -86,6 +100,12 @@ class Board {
          * Workflow execution / validation state.
          */
         this.isWorkflowRunning = false;
+        this.isWorkflowPaused = false;
+        this.workflowPauseResolvers = [];
+        this.currentExecutionMode = "idle";
+        this.currentExecutionWidgetIds = new Set();
+        this.currentExecutionLabel = "";
+        this.currentRunningWidget = null;
         this.executionRunId = 0;
         this.lastRunRuntimeMs = 0;
         this.lastRunMemoryKb = 0;
@@ -138,6 +158,11 @@ class Board {
         );
 
         this.render();
+
+        window.setTimeout(
+            () => this.maybeStartFirstRunTutorial(),
+            500
+        );
     }
 
     render() {
@@ -175,6 +200,7 @@ class Board {
          * ============================= */
         const fileMenu = document.createElement("div");
         fileMenu.className = "dropdown-menu";
+        fileMenu.dataset.tour = "file-menu";
 
         const fileButton = document.createElement("button");
         fileButton.className = "dropdown-button";
@@ -232,6 +258,7 @@ class Board {
          * ============================= */
         const editMenu = document.createElement("div");
         editMenu.className = "dropdown-menu";
+        editMenu.dataset.tour = "edit-menu";
 
         const editButton = document.createElement("button");
         editButton.className = "dropdown-button";
@@ -272,6 +299,7 @@ class Board {
          * ============================= */
         const viewMenu = document.createElement("div");
         viewMenu.className = "dropdown-menu";
+        viewMenu.dataset.tour = "view-menu";
 
         const viewButton = document.createElement("button");
         viewButton.className = "dropdown-button";
@@ -389,6 +417,7 @@ class Board {
          * ============================= */
         const workflowMenu = document.createElement("div");
         workflowMenu.className = "dropdown-menu";
+        workflowMenu.dataset.tour = "workflow-menu";
 
         const workflowButton = document.createElement("button");
         workflowButton.className = "dropdown-button";
@@ -397,20 +426,96 @@ class Board {
         const workflowDropdown = document.createElement("div");
         workflowDropdown.className = "dropdown-content workflow-dropdown-content";
 
-        const runMenuItem = document.createElement("button");
-        runMenuItem.textContent = "▶  Run Workflow   Ctrl+Enter";
+        const createWorkflowCommandItem = ({
+            label,
+            shortcut = "",
+            icon,
+            iconFill = false
+        }) => {
+            const button = document.createElement("button");
+            button.className = "workflow-command-item";
+            button.type = "button";
+
+            button.innerHTML = `
+                <span class="workflow-menu-icon${iconFill ? " fill-icon" : ""}" aria-hidden="true">
+                    ${icon}
+                </span>
+                <span class="workflow-menu-label">${label}</span>
+                <span class="workflow-menu-shortcut">${shortcut}</span>
+            `;
+
+            return button;
+        };
+
+        const runMenuItem = createWorkflowCommandItem({
+            label: "Run Workflow",
+            shortcut: "Ctrl+Enter",
+            iconFill: true,
+            icon: `
+                <svg viewBox="0 0 24 24">
+                    <path d="M8 5.5L18 12L8 18.5Z"></path>
+                </svg>
+            `
+        });
         runMenuItem.addEventListener("click", () => {
             this.runWorkflow();
         });
 
-        const validateMenuItem = document.createElement("button");
-        validateMenuItem.textContent = "✓  Validate Workflow";
-        validateMenuItem.addEventListener("click", () => {
-            this.validateWorkflow(true);
+        const runSelectedMenuItem = createWorkflowCommandItem({
+            label: "Run Selected Node",
+            shortcut: "Ctrl+Shift+Enter",
+            icon: `
+                <svg viewBox="0 0 24 24">
+                    <rect x="4" y="5" width="8" height="14" rx="2"></rect>
+                    <path d="M14.5 8.5L20 12L14.5 15.5Z"></path>
+                </svg>
+            `
+        });
+        runSelectedMenuItem.addEventListener("click", () => {
+            this.runSelectedWidget();
         });
 
-        const stopMenuItem = document.createElement("button");
-        stopMenuItem.textContent = "■  Stop Run";
+        const runFromSelectedMenuItem = createWorkflowCommandItem({
+            label: "Run From Selected Node",
+            icon: `
+                <svg viewBox="0 0 24 24">
+                    <circle cx="6" cy="12" r="2.25"></circle>
+                    <path d="M8.5 12H18"></path>
+                    <path d="M14.5 8.5L18 12L14.5 15.5"></path>
+                </svg>
+            `
+        });
+        runFromSelectedMenuItem.addEventListener("click", () => {
+            this.runFromSelectedWidget();
+        });
+
+        const runDivider = document.createElement("div");
+        runDivider.className = "dropdown-divider";
+
+        const pauseMenuItem = createWorkflowCommandItem({
+            label: "Pause Run",
+            shortcut: "Ctrl+.",
+            iconFill: true,
+            icon: `
+                <svg viewBox="0 0 24 24">
+                    <path d="M7 5H10V19H7Z"></path>
+                    <path d="M14 5H17V19H14Z"></path>
+                </svg>
+            `
+        });
+        pauseMenuItem.addEventListener("click", () => {
+            this.toggleWorkflowPause();
+        });
+
+        const stopMenuItem = createWorkflowCommandItem({
+            label: "Stop Run",
+            iconFill: true,
+            icon: `
+                <svg viewBox="0 0 24 24">
+                    <rect x="7" y="7" width="10" height="10" rx="1"></rect>
+                </svg>
+            `
+        });
         stopMenuItem.addEventListener("click", () => {
             this.stopWorkflowRun();
         });
@@ -418,32 +523,108 @@ class Board {
         const workflowDivider = document.createElement("div");
         workflowDivider.className = "dropdown-divider";
 
-        const resetStatusMenuItem = document.createElement("button");
-        resetStatusMenuItem.textContent = "Reset Status Labels";
+        const validateMenuItem = createWorkflowCommandItem({
+            label: "Validate Workflow",
+            icon: `
+                <svg viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="8"></circle>
+                    <path d="M8.5 12.25L10.75 14.5L15.75 9.5"></path>
+                </svg>
+            `
+        });
+        validateMenuItem.addEventListener("click", () => {
+            this.validateWorkflow(true);
+        });
+
+        const resetStatusMenuItem = createWorkflowCommandItem({
+            label: "Reset Status Labels",
+            icon: `
+                <svg viewBox="0 0 24 24">
+                    <path d="M19 8A8 8 0 1 0 20 14"></path>
+                    <path d="M19 4V8H15"></path>
+                </svg>
+            `
+        });
         resetStatusMenuItem.addEventListener("click", () => {
             this.resetWorkflowStatuses();
         });
 
         workflowDropdown.appendChild(runMenuItem);
-        workflowDropdown.appendChild(validateMenuItem);
+        workflowDropdown.appendChild(runSelectedMenuItem);
+        workflowDropdown.appendChild(runFromSelectedMenuItem);
+        workflowDropdown.appendChild(runDivider);
+        workflowDropdown.appendChild(pauseMenuItem);
         workflowDropdown.appendChild(stopMenuItem);
         workflowDropdown.appendChild(workflowDivider);
+        workflowDropdown.appendChild(validateMenuItem);
         workflowDropdown.appendChild(resetStatusMenuItem);
         workflowMenu.appendChild(workflowButton);
         workflowMenu.appendChild(workflowDropdown);
 
         this.runWorkflowMenuItem = runMenuItem;
+        this.runSelectedMenuItem = runSelectedMenuItem;
+        this.runFromSelectedMenuItem = runFromSelectedMenuItem;
+        this.pauseWorkflowMenuItem = pauseMenuItem;
         this.stopWorkflowMenuItem = stopMenuItem;
 
 
         /* =============================
          * Help
          * ============================= */
+        const helpMenu = document.createElement("div");
+        helpMenu.className = "dropdown-menu";
+        helpMenu.dataset.tour = "help-menu";
+
         const helpButton = document.createElement("button");
+        helpButton.className = "dropdown-button";
         helpButton.textContent = "Help";
-        helpButton.addEventListener("click", () => {
-            this.showShortcutHelp();
-        });
+        helpButton.title = "Open a guided tutorial";
+
+        const helpDropdown = document.createElement("div");
+        helpDropdown.className =
+            "dropdown-content help-dropdown-content";
+
+        const tutorialSections = [
+            ["full", "Full Tutorial"],
+            ["basics", "Interface Basics"],
+            ["canvas", "Canvas & Navigation"],
+            ["widgets", "Widgets & Connections"],
+            ["io", "Inputs & Outputs"],
+            ["properties", "Properties Panel"],
+            ["scripts", "Scripts & Languages"],
+            ["decisions", "Decision Nodes"],
+            ["run", "Run Controls & Validation"],
+            ["console", "Execution Console"],
+            ["shortcuts", "Keyboard Shortcuts"]
+        ];
+
+        tutorialSections.forEach(
+            ([sectionId, label], index) => {
+                if (index === 1) {
+                    const divider =
+                        document.createElement("div");
+                    divider.className = "dropdown-divider";
+                    helpDropdown.appendChild(divider);
+                }
+
+                const item =
+                    document.createElement("button");
+                item.type = "button";
+                item.className = "tutorial-section-item";
+                item.textContent = label;
+                item.addEventListener("click", () => {
+                    this.startInterfaceTutorial({
+                        force: true,
+                        section: sectionId
+                    });
+                });
+
+                helpDropdown.appendChild(item);
+            }
+        );
+
+        helpMenu.appendChild(helpButton);
+        helpMenu.appendChild(helpDropdown);
 
 
         /* =============================
@@ -451,6 +632,7 @@ class Board {
          * ============================= */
         const historyControls = document.createElement("div");
         historyControls.className = "history-controls";
+        historyControls.dataset.tour = "history-controls";
 
         const undoButton = document.createElement("button");
         undoButton.className = "history-icon-button";
@@ -488,12 +670,71 @@ class Board {
         this.redoButton = redoButton;
 
         /* =============================
+         * Workflow run icon toolbar
+         * ============================= */
+        const runControls = document.createElement("div");
+        runControls.className = "run-controls";
+        runControls.dataset.tour = "run-controls";
+
+        const runToolbarButton = document.createElement("button");
+        runToolbarButton.className = "history-icon-button run-toolbar-button";
+        runToolbarButton.type = "button";
+        runToolbarButton.title = "Run Workflow (Ctrl+Enter)";
+        runToolbarButton.setAttribute("aria-label", "Run Workflow");
+        runToolbarButton.innerHTML = `
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path class="run-icon-fill" d="M8 5.5L18 12L8 18.5Z"></path>
+            </svg>
+        `;
+        runToolbarButton.addEventListener("click", () => {
+            this.runWorkflow();
+        });
+
+        const pauseToolbarButton = document.createElement("button");
+        pauseToolbarButton.className = "history-icon-button run-toolbar-button";
+        pauseToolbarButton.type = "button";
+        pauseToolbarButton.title = "Pause Run";
+        pauseToolbarButton.setAttribute("aria-label", "Pause Run");
+        pauseToolbarButton.innerHTML = `
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path class="run-icon-fill" d="M7 5H10V19H7Z"></path>
+                <path class="run-icon-fill" d="M14 5H17V19H14Z"></path>
+            </svg>
+        `;
+        pauseToolbarButton.addEventListener("click", () => {
+            this.toggleWorkflowPause();
+        });
+
+        const stopToolbarButton = document.createElement("button");
+        stopToolbarButton.className = "history-icon-button run-toolbar-button stop-run-toolbar-button";
+        stopToolbarButton.type = "button";
+        stopToolbarButton.title = "Stop Run";
+        stopToolbarButton.setAttribute("aria-label", "Stop Run");
+        stopToolbarButton.innerHTML = `
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect class="run-icon-fill" x="7" y="7" width="10" height="10" rx="1"></rect>
+            </svg>
+        `;
+        stopToolbarButton.addEventListener("click", () => {
+            this.stopWorkflowRun();
+        });
+
+        runControls.appendChild(runToolbarButton);
+        runControls.appendChild(pauseToolbarButton);
+        runControls.appendChild(stopToolbarButton);
+
+        this.runToolbarButton = runToolbarButton;
+        this.pauseToolbarButton = pauseToolbarButton;
+        this.stopToolbarButton = stopToolbarButton;
+
+        /* =============================
          * Execution Console toolbar button
          * ============================= */
         const consoleButton =
             document.createElement("button");
         consoleButton.className =
             "history-icon-button console-toolbar-button";
+        consoleButton.dataset.tour = "console-button";
         consoleButton.type = "button";
         consoleButton.title =
             "Toggle Execution Console (Ctrl+`)";
@@ -533,13 +774,15 @@ class Board {
         menuBar.appendChild(editMenu);
         menuBar.appendChild(viewMenu);
         menuBar.appendChild(workflowMenu);
-        menuBar.appendChild(helpButton);
+        menuBar.appendChild(helpMenu);
         menuBar.appendChild(historyControls);
+        menuBar.appendChild(runControls);
         menuBar.appendChild(consoleButton);
         menuBar.appendChild(spacer);
         menuBar.appendChild(zoomDisplay);
 
         this.updateHistoryButtons();
+        this.updateRunControls();
 
         return menuBar;
     }
@@ -591,6 +834,8 @@ class Board {
     createPanel(side, title) {
         const panel = document.createElement("aside");
         panel.className = `side-panel ${side}-panel`;
+        panel.dataset.tour =
+            side === "left" ? "left-panel" : "right-panel";
 
         const panelHeader = document.createElement("div");
         panelHeader.className = "panel-header";
@@ -657,6 +902,7 @@ class Board {
             document.createElement("section");
 
         workspaceContainer.className = "workspace-container";
+        workspaceContainer.dataset.tour = "workspace";
 
         const workspace = document.createElement("div");
         workspace.className = "workspace";
@@ -871,6 +1117,7 @@ class Board {
 
         workflowMap.className =
             "workflow-map";
+        workflowMap.dataset.tour = "workflow-map";
 
         const mapTitle =
             document.createElement("div");
@@ -946,6 +1193,8 @@ class Board {
             document.createElement("section");
 
         panel.className =
+            "execution-console";
+        panel.dataset.tour =
             "execution-console";
 
         panel.setAttribute(
@@ -1233,6 +1482,7 @@ class Board {
         const allowed = new Set([
             "idle",
             "running",
+            "paused",
             "finished",
             "warning",
             "error",
@@ -1669,6 +1919,7 @@ class Board {
     createStatsBar() {
         const statsBar = document.createElement("footer");
         statsBar.className = "stats-bar";
+        statsBar.dataset.tour = "stats-bar";
 
         this.widgetCountElement =
             document.createElement("span");
@@ -2661,6 +2912,24 @@ class Board {
     }
 
     async handleKeyDown(event) {
+        if (this.tutorialActive) {
+            if (event.key === "Escape") {
+                event.preventDefault();
+                this.finishInterfaceTutorial();
+                return;
+            }
+            if (event.key === "ArrowRight") {
+                event.preventDefault();
+                this.nextTutorialStep();
+                return;
+            }
+            if (event.key === "ArrowLeft") {
+                event.preventDefault();
+                this.previousTutorialStep();
+                return;
+            }
+        }
+
         const activeElement = document.activeElement;
 
         const isTyping =
@@ -2740,6 +3009,37 @@ class Board {
         ) {
             event.preventDefault();
             this.exportWorkflow();
+            return;
+        }
+
+        if (
+            modifierKey &&
+            event.key === "."
+        ) {
+            if (this.isWorkflowRunning) {
+                event.preventDefault();
+                this.toggleWorkflowPause();
+            }
+            return;
+        }
+
+        if (
+            modifierKey &&
+            event.shiftKey &&
+            event.key === "Enter"
+        ) {
+            event.preventDefault();
+            this.runSelectedWidget();
+            return;
+        }
+
+        if (
+            modifierKey &&
+            event.altKey &&
+            event.key === "Enter"
+        ) {
+            event.preventDefault();
+            this.runFromSelectedWidget();
             return;
         }
 
@@ -2829,6 +3129,7 @@ class Board {
 
         this.updateStats();
         this.updateWorkflowMap();
+        this.updateRunControls();
     }
 
     selectConnection(connection) {
@@ -2854,6 +3155,7 @@ class Board {
             this.showNoSelectionMessage();
             this.updateStats();
             this.updateWorkflowMap();
+            this.updateRunControls();
             return;
         }
 
@@ -2872,6 +3174,7 @@ class Board {
 
         this.updateStats();
         this.updateWorkflowMap();
+        this.updateRunControls();
     }
 
     clearConnectionSelection() {
@@ -3675,6 +3978,7 @@ class Board {
             this.createPropertiesSection(
                 "General"
             );
+        general.section.dataset.tour = "properties-general";
 
         const titleRow =
             document.createElement("div");
@@ -3807,6 +4111,7 @@ class Board {
                 "Inputs",
                 "Connect one or more previous outputs to the same input. Multiple sources are delivered as an ordered array."
             );
+        inputsSection.section.dataset.tour = "properties-inputs";
 
         widget.inputs.forEach(
             (input) => {
@@ -4419,6 +4724,7 @@ class Board {
                 "Outputs",
                 "Outputs can feed any number of downstream inputs. Start-node values can be entered here directly."
             );
+        outputsSection.section.dataset.tour = "properties-outputs";
 
         widget.outputs.forEach(
             (output) => {
@@ -4717,6 +5023,7 @@ class Board {
                     "Decision Branching",
                     "Evaluate a Boolean condition and activate exactly one output branch. Downstream nodes on the other branch are skipped automatically."
                 );
+            decisionSection.section.dataset.tour = "properties-decision";
 
             const conditionRow =
                 document.createElement(
@@ -5078,6 +5385,7 @@ class Board {
                 "Script",
                 "Runs in the browser-safe workflow simulator. Bash, Python, and JavaScript syntax is interpreted locally; no operating-system commands are executed."
             );
+        scriptSection.section.dataset.tour = "properties-script";
 
         if (widget.type === "Decision") {
             scriptSection.section.hidden = true;
@@ -5270,6 +5578,7 @@ class Board {
             this.createPropertiesSection(
                 "Status & Performance"
             );
+        statusSection.section.dataset.tour = "properties-status";
 
         const showStatusLabel =
             document.createElement("label");
@@ -5392,6 +5701,7 @@ class Board {
             document.createElement("div");
         actions.className =
             "property-actions stacked-property-actions";
+        actions.dataset.tour = "properties-actions";
 
         const validateButton =
             document.createElement("button");
@@ -5405,13 +5715,47 @@ class Board {
             }
         );
 
+        const runSelectedButton =
+            document.createElement("button");
+        runSelectedButton.type = "button";
+        runSelectedButton.className =
+            "primary-property-button";
+        runSelectedButton.textContent =
+            "▷ Run This Node";
+        runSelectedButton.title =
+            "Run only this widget using its current input values";
+        runSelectedButton.disabled =
+            this.isWorkflowRunning;
+        runSelectedButton.addEventListener(
+            "click",
+            () => {
+                this.runSelectedWidget(widget);
+            }
+        );
+
+        const runFromHereButton =
+            document.createElement("button");
+        runFromHereButton.type = "button";
+        runFromHereButton.textContent =
+            "↳ Run From Here";
+        runFromHereButton.title =
+            "Run this widget, then every downstream widget";
+        runFromHereButton.disabled =
+            this.isWorkflowRunning;
+        runFromHereButton.addEventListener(
+            "click",
+            () => {
+                this.runFromSelectedWidget(widget);
+            }
+        );
+
         const runButton =
             document.createElement("button");
         runButton.type = "button";
-        runButton.className =
-            "primary-property-button";
         runButton.textContent =
-            "▶ Run Workflow";
+            "▶ Run Full Workflow";
+        runButton.disabled =
+            this.isWorkflowRunning;
         runButton.addEventListener(
             "click",
             () => {
@@ -5433,6 +5777,8 @@ class Board {
         );
 
         actions.appendChild(validateButton);
+        actions.appendChild(runSelectedButton);
+        actions.appendChild(runFromHereButton);
         actions.appendChild(runButton);
         actions.appendChild(deleteButton);
         this.propertiesPanelContent.appendChild(
@@ -5803,6 +6149,12 @@ class Board {
     clearWorkflow() {
         this.executionRunId += 1;
         this.isWorkflowRunning = false;
+        this.isWorkflowPaused = false;
+        this.currentExecutionMode = "idle";
+        this.currentExecutionWidgetIds = new Set();
+        this.currentExecutionLabel = "";
+        this.currentRunningWidget = null;
+        this.releaseWorkflowPauseWaiters();
 
         this.clearAllWidgetPeek();
 
@@ -5880,8 +6232,18 @@ class Board {
             `Memory: ${totalMemory.toFixed(1)} KB`;
 
         if (this.isWorkflowRunning) {
+            const runState =
+                this.isWorkflowPaused
+                    ? "paused"
+                    : "running";
+
+            const modeLabel =
+                this.currentExecutionLabel
+                    ? ` · ${this.currentExecutionLabel}`
+                    : "";
+
             this.positionElement.textContent =
-                "Workflow: running";
+                `Workflow: ${runState}${modeLabel}`;
         } else if (this.selectedWidget) {
             this.positionElement.textContent =
                 `Selected: ${this.selectedWidget.title}`;
@@ -7039,6 +7401,485 @@ class Board {
         this.scheduleSave();
     }
 
+    maybeStartFirstRunTutorial() {
+        if (this.tutorialActive) return;
+
+        let seen = false;
+        try {
+            seen = localStorage.getItem(this.tutorialStorageKey) === "true";
+        } catch (error) {}
+
+        if (seen) return;
+
+        try {
+            localStorage.setItem(this.tutorialStorageKey, "true");
+        } catch (error) {}
+
+        this.startInterfaceTutorial();
+    }
+
+    startInterfaceTutorial(
+        { force = false, section = "full" } = {}
+    ) {
+        if (this.tutorialActive || this.activeDialog) return;
+
+        if (force) {
+            try {
+                localStorage.setItem(this.tutorialStorageKey, "true");
+            } catch (error) {}
+        }
+
+        this.hideContextMenu();
+        this.tutorialPreviousUiState = {
+            leftPanelVisible: this.leftPanelVisible,
+            rightPanelVisible: this.rightPanelVisible,
+            executionConsoleOpen: this.executionConsoleOpen,
+            selectedWidgetId: this.selectedWidget?.id || null,
+            selectedConnectionId: this.selectedConnection?.id || null
+        };
+
+        this.tutorialActive = true;
+        this.tutorialStepIndex = 0;
+        this.tutorialSectionId = section;
+        this.tutorialSectionLabel =
+            this.getTutorialSectionLabel(section);
+        this.tutorialSteps =
+            this.getInterfaceTutorialSteps(section);
+
+        if (this.tutorialSteps.length === 0) {
+            this.tutorialSectionId = "full";
+            this.tutorialSectionLabel = "Full Tutorial";
+            this.tutorialSteps =
+                this.getInterfaceTutorialSteps("full");
+        }
+
+        const layer = document.createElement("div");
+        layer.className = "interface-tutorial-layer";
+
+        const highlight = document.createElement("div");
+        highlight.className = "interface-tutorial-highlight";
+
+        const card = document.createElement("section");
+        card.className = "interface-tutorial-card";
+        card.setAttribute("role", "dialog");
+        card.setAttribute("aria-modal", "true");
+        card.setAttribute("aria-label", "Workflow Builder tutorial");
+
+        layer.appendChild(highlight);
+        layer.appendChild(card);
+        document.body.appendChild(layer);
+
+        this.tutorialLayer = layer;
+        this.tutorialHighlight = highlight;
+        this.tutorialCard = card;
+        this.tutorialResizeHandler = () => this.positionTutorialStep();
+        window.addEventListener("resize", this.tutorialResizeHandler);
+        this.showTutorialStep();
+    }
+
+    getTutorialSectionLabel(sectionId) {
+        const labels = {
+            full: "Full Tutorial",
+            basics: "Interface Basics",
+            canvas: "Canvas & Navigation",
+            widgets: "Widgets & Connections",
+            io: "Inputs & Outputs",
+            properties: "Properties Panel",
+            scripts: "Scripts & Languages",
+            decisions: "Decision Nodes",
+            run: "Run Controls & Validation",
+            console: "Execution Console",
+            shortcuts: "Keyboard Shortcuts"
+        };
+
+        return labels[sectionId] || "Tutorial";
+    }
+
+    getInterfaceTutorialSteps(section = "full") {
+        const openMenu = (name) => () => {
+            this.clearTutorialPreparation();
+            document
+                .querySelector(`[data-tour="${name}"]`)
+                ?.classList.add("tutorial-menu-open");
+        };
+
+        const showProps = (name = null) => () => {
+            this.clearTutorialPreparation();
+            this.prepareTutorialProperties();
+
+            const element = name
+                ? document.querySelector(
+                    `[data-tour="${name}"]`
+                )
+                : null;
+
+            element?.scrollIntoView({
+                block: "center",
+                behavior: "auto"
+            });
+        };
+
+        const allSteps = [
+            {
+                sections: ["basics"],
+                title: "Welcome",
+                target: null,
+                text: "Build a workflow by adding nodes, connecting ports, setting properties, then validating and running it."
+            },
+            {
+                sections: ["basics"],
+                title: "File",
+                target: '[data-tour="file-menu"]',
+                prepare: openMenu("file-menu"),
+                text: "New starts over. Import loads a saved JSON workflow. Export saves the current one. Ctrl+S exports quickly."
+            },
+            {
+                sections: ["basics", "shortcuts"],
+                title: "Edit",
+                target: '[data-tour="edit-menu"]',
+                prepare: openMenu("edit-menu"),
+                text: "Undo and Redo reverse edits. Duplicate Selected makes a copy of the current widget."
+            },
+            {
+                sections: ["basics", "canvas"],
+                title: "View",
+                target: '[data-tour="view-menu"]',
+                prepare: openMenu("view-menu"),
+                text: "Show or hide panels and the console. Reset View recenters the canvas and returns zoom to 100%."
+            },
+            {
+                sections: ["basics", "run"],
+                title: "Workflow",
+                target: '[data-tour="workflow-menu"]',
+                prepare: openMenu("workflow-menu"),
+                text: "Run the whole workflow, one selected node, or everything after a selected node. You can also pause, resume, stop, validate, or reset statuses."
+            },
+            {
+                sections: ["basics", "shortcuts"],
+                title: "Undo / Redo",
+                target: '[data-tour="history-controls"]',
+                text: "Use these arrows for quick Undo and Redo. The terminal icon beside them opens the Execution Console."
+            },
+            {
+                sections: ["run", "basics"],
+                title: "Run controls",
+                target: '[data-tour="run-controls"]',
+                text: "Play runs the full workflow. Pause freezes execution and resumes from the same point. Stop ends the current run."
+            },
+            {
+                sections: ["basics", "widgets"],
+                title: "Widget Library",
+                target: '[data-tour="left-panel"]',
+                prepare: () => {
+                    this.clearTutorialPreparation();
+                    if (!this.leftPanelVisible) {
+                        this.togglePanel("left");
+                    }
+                },
+                text: "Start provides values. Process changes data. Decision chooses a branch. End receives the result."
+            },
+            {
+                sections: ["canvas"],
+                title: "Workspace",
+                target: '[data-tour="workspace"]',
+                text: "Drag widgets to move them. Scroll to zoom. Middle-mouse drag pans the canvas. Click empty space to deselect."
+            },
+            {
+                sections: ["widgets", "io"],
+                title: "Widgets and ports",
+                target: ".widget",
+                prepare: () => {
+                    this.clearTutorialPreparation();
+                    const widget =
+                        this.widgets.find(
+                            (item) => item.type === "Process"
+                        ) || this.widgets[0];
+                    if (widget) this.selectWidget(widget);
+                },
+                text: "Inputs are on the left and outputs are on the right. Widgets also show values and status."
+            },
+            {
+                sections: ["widgets", "io", "decisions"],
+                title: "Connections",
+                target: '[data-tour="workspace"]',
+                text: "Drag an output circle to an input circle. Green is compatible, amber needs conversion, and red is invalid."
+            },
+            {
+                sections: ["widgets", "canvas"],
+                title: "Peek Mode",
+                target: '[data-tour="workspace"]',
+                text: "If widgets or lines overlap, hover the visible part to fade what is covering it."
+            },
+            {
+                sections: ["canvas"],
+                title: "Workflow Map",
+                target: '[data-tour="workflow-map"]',
+                text: "Click the map to jump. Drag anywhere on it, or drag the red box, to move around the full canvas."
+            },
+            {
+                sections: ["properties", "io", "scripts"],
+                title: "Properties panel",
+                target: '[data-tour="right-panel"]',
+                prepare: showProps(),
+                text: "Select a widget to edit it here. Select a connection to see exactly which ports it joins."
+            },
+            {
+                sections: ["properties"],
+                title: "General",
+                target: '[data-tour="properties-general"]',
+                prepare: showProps("properties-general"),
+                text: "Change the widget title and type here. Position shows where the widget sits on the canvas."
+            },
+            {
+                sections: ["properties", "io"],
+                title: "Inputs",
+                target: '[data-tour="properties-inputs"]',
+                prepare: showProps("properties-inputs"),
+                text: "Name and type each input. The Source dropdown can connect another node automatically. Add, remove, or mark inputs Required."
+            },
+            {
+                sections: ["properties", "io"],
+                title: "Multiple input sources",
+                target: '[data-tour="properties-inputs"]',
+                prepare: showProps("properties-inputs"),
+                text: "One input can receive several connections. Multiple incoming values arrive as an ordered array."
+            },
+            {
+                sections: ["properties", "io"],
+                title: "Outputs",
+                target: '[data-tour="properties-outputs"]',
+                prepare: showProps("properties-outputs"),
+                text: "Name and type outputs here. Start nodes can set starting values, and one output can feed many other nodes."
+            },
+            {
+                sections: ["properties", "io", "scripts"],
+                title: "Data types",
+                target: '[data-tour="properties-inputs"]',
+                prepare: showProps("properties-inputs"),
+                text: "Any is flexible. String, Number, Boolean, Array, and JSON add type checks so bad connections are easier to catch."
+            },
+            {
+                sections: ["properties", "scripts"],
+                title: "Script / Source",
+                target: '[data-tour="properties-script"]',
+                prepare: showProps("properties-script"),
+                text: "Process nodes can pass data through or use Expression, Bash, Python, or JavaScript simulation. Input names become variables."
+            },
+            {
+                sections: ["decisions", "properties"],
+                title: "Decision Branching",
+                target: '[data-tour="right-panel"]',
+                prepare: () => {
+                    this.clearTutorialPreparation();
+                    if (!this.rightPanelVisible) {
+                        this.togglePanel("right");
+                    }
+
+                    const decision =
+                        this.widgets.find(
+                            (item) => item.type === "Decision"
+                        );
+
+                    if (decision) {
+                        this.selectWidget(decision);
+                        document
+                            .querySelector(
+                                '[data-tour="properties-decision"]'
+                            )
+                            ?.scrollIntoView({
+                                block: "center",
+                                behavior: "auto"
+                            });
+                    }
+                },
+                text: "Write a condition such as value > 10. TRUE uses one output and FALSE uses the other; only the chosen branch runs."
+            },
+            {
+                sections: ["properties", "run", "decisions"],
+                title: "Status & Performance",
+                target: '[data-tour="properties-status"]',
+                prepare: showProps("properties-status"),
+                text: "See whether a node is idle, running, finished, skipped, stopped, or in error. Runtime and memory appear here too."
+            },
+            {
+                sections: ["properties", "run"],
+                title: "Validate / Run / Delete",
+                target: '[data-tour="properties-actions"]',
+                prepare: showProps("properties-actions"),
+                text: "Run This Node tests only the selected widget. Run From Here continues through its downstream path. Full Run executes everything."
+            },
+            {
+                sections: ["run", "console"],
+                title: "Execution Console",
+                target: '[data-tour="execution-console"]',
+                prepare: () => {
+                    this.clearTutorialPreparation();
+                    this.setExecutionConsoleOpen(true);
+                },
+                text: "The console shows what ran, values, warnings, errors, runtime, and memory. Drag its top edge to resize it."
+            },
+            {
+                sections: ["run", "console"],
+                title: "Console controls",
+                target: '[data-tour="execution-console"]',
+                prepare: () => {
+                    this.clearTutorialPreparation();
+                    this.setExecutionConsoleOpen(true);
+                },
+                text: "Clear removes old logs. Auto-scroll keeps the newest message visible. Ctrl+` opens or closes the console."
+            },
+            {
+                sections: ["run", "canvas"],
+                title: "Status bar",
+                target: '[data-tour="stats-bar"]',
+                text: "The bottom bar shows widget count, total runtime, memory, and the current selection or zoom."
+            },
+            {
+                sections: ["widgets"],
+                title: "Context menus",
+                target: '[data-tour="workspace"]',
+                text: "Right-click a widget or connection for quick actions such as Properties, Duplicate, Disconnect, or Delete."
+            },
+            {
+                sections: ["shortcuts"],
+                title: "Keyboard Shortcuts",
+                target: '[data-tour="help-menu"]',
+                text: "Ctrl+Enter runs everything. Ctrl+Shift+Enter runs the selected node. Ctrl+Alt+Enter runs from it. Ctrl+. pauses or resumes."
+            },
+            {
+                sections: ["basics"],
+                title: "You're ready",
+                target: null,
+                text: "A simple flow is: add nodes → set inputs and outputs → connect them → validate → run. Use Help anytime for one topic."
+            }
+        ];
+
+        if (section === "full") {
+            return allSteps;
+        }
+
+        return allSteps.filter(
+            (step) =>
+                Array.isArray(step.sections) &&
+                step.sections.includes(section)
+        );
+    }
+
+    clearTutorialPreparation() {
+        document.querySelectorAll(".tutorial-menu-open").forEach((el) => el.classList.remove("tutorial-menu-open"));
+    }
+
+    prepareTutorialProperties() {
+        if (!this.rightPanelVisible) this.togglePanel("right");
+        const widget = this.selectedWidget || this.widgets.find((x) => x.type === "Process") || this.widgets.find((x) => x.type !== "Decision") || this.widgets[0];
+        if (widget) this.selectWidget(widget);
+    }
+
+    showTutorialStep() {
+        if (!this.tutorialActive || !this.tutorialCard) return;
+        const step = this.tutorialSteps[this.tutorialStepIndex];
+        if (!step) { this.finishInterfaceTutorial(); return; }
+
+        this.clearTutorialPreparation();
+        if (typeof step.prepare === "function") step.prepare();
+
+        const number = this.tutorialStepIndex + 1;
+        const total = this.tutorialSteps.length;
+        this.tutorialCard.innerHTML = "";
+
+        const top = document.createElement("div"); top.className = "interface-tutorial-card-top";
+        const progress = document.createElement("span");
+        progress.className = "interface-tutorial-progress";
+        progress.textContent =
+            `${this.tutorialSectionLabel} · ${number} of ${total}`;
+
+        const skip = document.createElement("button");
+        skip.type = "button";
+        skip.className = "interface-tutorial-skip";
+        skip.textContent = "Close";
+        skip.addEventListener(
+            "click",
+            () => this.finishInterfaceTutorial()
+        );
+        top.append(progress, skip);
+
+        const title = document.createElement("h2"); title.textContent = step.title;
+        const text = document.createElement("p"); text.textContent = step.text;
+        const hint = document.createElement("div");
+        hint.className = "interface-tutorial-key-hint";
+        hint.textContent = "← / → to move · Esc to close";
+        const actions = document.createElement("div"); actions.className = "interface-tutorial-actions";
+        const back = document.createElement("button"); back.type="button"; back.className="interface-tutorial-secondary"; back.textContent="← Back"; back.disabled=this.tutorialStepIndex===0; back.addEventListener("click",()=>this.previousTutorialStep());
+        const next = document.createElement("button"); next.type="button"; next.className="interface-tutorial-primary"; next.textContent=number===total?"Finish":"Next →"; next.addEventListener("click",()=>this.nextTutorialStep());
+        actions.append(back,next);
+        this.tutorialCard.append(top,title,text,hint,actions);
+
+        requestAnimationFrame(()=>{ this.positionTutorialStep(); next.focus({preventScroll:true}); });
+    }
+
+    positionTutorialStep() {
+        if (!this.tutorialActive || !this.tutorialCard || !this.tutorialHighlight) return;
+        const step = this.tutorialSteps[this.tutorialStepIndex];
+        let target = step?.target ? document.querySelector(step.target) : null;
+        if (target?.hidden) target = null;
+
+        const vw=window.innerWidth, vh=window.innerHeight, margin=16, gap=14;
+        const cardRect=this.tutorialCard.getBoundingClientRect();
+
+        if (!target) {
+            this.tutorialHighlight.classList.add("tutorial-highlight-fullscreen");
+            Object.assign(this.tutorialHighlight.style,{left:"0px",top:"0px",width:"0px",height:"0px"});
+            this.tutorialCard.style.left=`${Math.max(margin,(vw-cardRect.width)/2)}px`;
+            this.tutorialCard.style.top=`${Math.max(margin,(vh-cardRect.height)/2)}px`;
+            return;
+        }
+
+        this.tutorialHighlight.classList.remove("tutorial-highlight-fullscreen");
+        const r=target.getBoundingClientRect(), p=6;
+        const l=Math.max(4,r.left-p), t=Math.max(4,r.top-p), rr=Math.min(vw-4,r.right+p), bb=Math.min(vh-4,r.bottom+p);
+        Object.assign(this.tutorialHighlight.style,{left:`${l}px`,top:`${t}px`,width:`${Math.max(0,rr-l)}px`,height:`${Math.max(0,bb-t)}px`});
+
+        const candidates=[
+            {left:r.left,top:r.bottom+gap},
+            {left:r.right+gap,top:r.top},
+            {left:r.left-cardRect.width-gap,top:r.top},
+            {left:r.left,top:r.top-cardRect.height-gap}
+        ];
+        let pos=candidates.find(x=>x.left>=margin&&x.top>=margin&&x.left+cardRect.width<=vw-margin&&x.top+cardRect.height<=vh-margin);
+        if(!pos) pos={left:Math.max(margin,Math.min(vw-cardRect.width-margin,r.left)),top:Math.max(margin,Math.min(vh-cardRect.height-margin,r.bottom+gap))};
+        this.tutorialCard.style.left=`${pos.left}px`; this.tutorialCard.style.top=`${pos.top}px`;
+    }
+
+    nextTutorialStep() {
+        if (!this.tutorialActive) return;
+        if (this.tutorialStepIndex >= this.tutorialSteps.length - 1) { this.finishInterfaceTutorial(); return; }
+        this.tutorialStepIndex += 1; this.showTutorialStep();
+    }
+
+    previousTutorialStep() {
+        if (!this.tutorialActive) return;
+        this.tutorialStepIndex = Math.max(0, this.tutorialStepIndex - 1); this.showTutorialStep();
+    }
+
+    finishInterfaceTutorial() {
+        if (!this.tutorialActive) return;
+        this.clearTutorialPreparation();
+        if (this.tutorialResizeHandler) window.removeEventListener("resize", this.tutorialResizeHandler);
+        this.tutorialLayer?.remove();
+        const previous=this.tutorialPreviousUiState;
+        this.tutorialActive=false; this.tutorialLayer=null; this.tutorialHighlight=null; this.tutorialCard=null; this.tutorialResizeHandler=null; this.tutorialSteps=[]; this.tutorialStepIndex=0; this.tutorialSectionId="full"; this.tutorialSectionLabel="Full Tutorial";
+
+        if (previous) {
+            if (this.leftPanelVisible !== previous.leftPanelVisible) this.togglePanel("left");
+            if (this.rightPanelVisible !== previous.rightPanelVisible) this.togglePanel("right");
+            if (this.executionConsoleOpen !== previous.executionConsoleOpen) this.setExecutionConsoleOpen(previous.executionConsoleOpen);
+            const c=previous.selectedConnectionId ? this.connections.find(x=>x.id===previous.selectedConnectionId) : null;
+            const w=previous.selectedWidgetId ? this.widgets.find(x=>x.id===previous.selectedWidgetId) : null;
+            if(c) this.selectConnection(c); else if(w) this.selectWidget(w); else this.selectWidget(null);
+        }
+        this.tutorialPreviousUiState=null;
+    }
+
     showShortcutHelp() {
         return this.showMessageDialog({
             title: "Keyboard Shortcuts",
@@ -7047,7 +7888,10 @@ class Board {
                 "Ctrl+Y / Ctrl+Shift+Z — Redo\n" +
                 "Ctrl+D — Duplicate selected widget\n" +
                 "Ctrl+S — Export workflow JSON\n" +
-                "Ctrl+Enter — Validate and run workflow\n" +
+                "Ctrl+Enter — Run full workflow\n" +
+                "Ctrl+Shift+Enter — Run selected node\n" +
+                "Ctrl+Alt+Enter — Run from selected node\n" +
+                "Ctrl+. — Pause / resume current run\n" +
                 "Ctrl+` — Toggle execution console\n" +
                 "Delete — Delete selected widget/connection\n" +
                 "Escape — Deselect / close peek state\n" +
@@ -7057,15 +7901,201 @@ class Board {
         });
     }
 
+    pauseWorkflowRun() {
+        if (
+            !this.isWorkflowRunning ||
+            this.isWorkflowPaused
+        ) {
+            return;
+        }
+
+        this.isWorkflowPaused = true;
+        this.setExecutionConsoleStatus("paused");
+        this.appendExecutionLog(
+            "info",
+            "Workflow paused.",
+            this.currentRunningWidget
+                ? `Paused near ${this.currentRunningWidget.title}.`
+                : "Execution will resume from the same point."
+        );
+        this.updateRunControls();
+        this.updateStats();
+    }
+
+    resumeWorkflowRun() {
+        if (
+            !this.isWorkflowRunning ||
+            !this.isWorkflowPaused
+        ) {
+            return;
+        }
+
+        this.isWorkflowPaused = false;
+        this.setExecutionConsoleStatus("running");
+        this.releaseWorkflowPauseWaiters();
+        this.appendExecutionLog(
+            "info",
+            "Workflow resumed."
+        );
+        this.updateRunControls();
+        this.updateStats();
+    }
+
+    toggleWorkflowPause() {
+        if (!this.isWorkflowRunning) {
+            return;
+        }
+
+        if (this.isWorkflowPaused) {
+            this.resumeWorkflowRun();
+        } else {
+            this.pauseWorkflowRun();
+        }
+    }
+
+    releaseWorkflowPauseWaiters() {
+        const resolvers =
+            this.workflowPauseResolvers.splice(0);
+
+        resolvers.forEach(
+            (resolve) => resolve()
+        );
+    }
+
+    async waitWhileWorkflowPaused(runId) {
+        while (
+            this.isWorkflowPaused &&
+            runId === this.executionRunId
+        ) {
+            await new Promise(
+                (resolve) => {
+                    this.workflowPauseResolvers.push(
+                        resolve
+                    );
+                }
+            );
+        }
+
+        if (runId !== this.executionRunId) {
+            throw new Error(
+                "Workflow run stopped."
+            );
+        }
+    }
+
     updateRunControls() {
+        const running =
+            this.isWorkflowRunning;
+
+        const hasSelectedWidget =
+            Boolean(this.selectedWidget);
+
         if (this.runWorkflowMenuItem) {
             this.runWorkflowMenuItem.disabled =
-                this.isWorkflowRunning;
+                running;
+        }
+
+        if (this.runSelectedMenuItem) {
+            this.runSelectedMenuItem.disabled =
+                running ||
+                !hasSelectedWidget;
+        }
+
+        if (this.runFromSelectedMenuItem) {
+            this.runFromSelectedMenuItem.disabled =
+                running ||
+                !hasSelectedWidget;
+        }
+
+        if (this.pauseWorkflowMenuItem) {
+            this.pauseWorkflowMenuItem.disabled =
+                !running;
+
+            const pauseMenuLabel =
+                this.pauseWorkflowMenuItem.querySelector(
+                    ".workflow-menu-label"
+                );
+
+            const pauseMenuIcon =
+                this.pauseWorkflowMenuItem.querySelector(
+                    ".workflow-menu-icon"
+                );
+
+            if (pauseMenuLabel) {
+                pauseMenuLabel.textContent =
+                    this.isWorkflowPaused
+                        ? "Resume Run"
+                        : "Pause Run";
+            }
+
+            if (pauseMenuIcon) {
+                pauseMenuIcon.classList.add("fill-icon");
+                pauseMenuIcon.innerHTML =
+                    this.isWorkflowPaused
+                        ? `
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M8 5.5L18 12L8 18.5Z"></path>
+                            </svg>
+                        `
+                        : `
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M7 5H10V19H7Z"></path>
+                                <path d="M14 5H17V19H14Z"></path>
+                            </svg>
+                        `;
+            }
         }
 
         if (this.stopWorkflowMenuItem) {
             this.stopWorkflowMenuItem.disabled =
-                !this.isWorkflowRunning;
+                !running;
+        }
+
+        if (this.runToolbarButton) {
+            this.runToolbarButton.disabled =
+                running;
+            this.runToolbarButton.classList.toggle(
+                "running",
+                running &&
+                !this.isWorkflowPaused
+            );
+        }
+
+        if (this.pauseToolbarButton) {
+            this.pauseToolbarButton.disabled =
+                !running;
+            this.pauseToolbarButton.title =
+                this.isWorkflowPaused
+                    ? "Resume Run (Ctrl+.)"
+                    : "Pause Run (Ctrl+.)";
+            this.pauseToolbarButton.setAttribute(
+                "aria-label",
+                this.isWorkflowPaused
+                    ? "Resume Run"
+                    : "Pause Run"
+            );
+            this.pauseToolbarButton.classList.toggle(
+                "paused",
+                this.isWorkflowPaused
+            );
+            this.pauseToolbarButton.innerHTML =
+                this.isWorkflowPaused
+                    ? `
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path class="run-icon-fill" d="M8 5.5L18 12L8 18.5Z"></path>
+                        </svg>
+                    `
+                    : `
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path class="run-icon-fill" d="M7 5H10V19H7Z"></path>
+                            <path class="run-icon-fill" d="M14 5H17V19H14Z"></path>
+                        </svg>
+                    `;
+        }
+
+        if (this.stopToolbarButton) {
+            this.stopToolbarButton.disabled =
+                !running;
         }
     }
 
@@ -7438,22 +8468,29 @@ class Board {
         };
     }
 
-    getTopologicalOrder() {
+    getTopologicalOrderForWidgets(
+        widgets
+    ) {
+        const allowedWidgets =
+            new Set(widgets || []);
+
         const indegree = new Map();
         const outgoing = new Map();
 
-        this.widgets.forEach((widget) => {
-            indegree.set(widget, 0);
-            outgoing.set(widget, []);
-        });
+        allowedWidgets.forEach(
+            (widget) => {
+                indegree.set(widget, 0);
+                outgoing.set(widget, []);
+            }
+        );
 
         this.connections.forEach(
             (connection) => {
                 if (
-                    !indegree.has(
+                    !allowedWidgets.has(
                         connection.sourceWidget
                     ) ||
-                    !indegree.has(
+                    !allowedWidgets.has(
                         connection.targetWidget
                     )
                 ) {
@@ -7476,10 +8513,11 @@ class Board {
         );
 
         const queue =
-            this.widgets.filter(
-                (widget) =>
-                    indegree.get(widget) === 0
-            );
+            Array.from(allowedWidgets)
+                .filter(
+                    (widget) =>
+                        indegree.get(widget) === 0
+                );
 
         const order = [];
 
@@ -7514,8 +8552,380 @@ class Board {
             order,
             hasCycle:
                 order.length !==
-                this.widgets.length
+                allowedWidgets.size
         };
+    }
+
+    getTopologicalOrder() {
+        return this.getTopologicalOrderForWidgets(
+            this.widgets
+        );
+    }
+
+    getDownstreamWidgets(
+        startWidget
+    ) {
+        if (!startWidget) {
+            return [];
+        }
+
+        const visited =
+            new Set([startWidget]);
+
+        const queue =
+            [startWidget];
+
+        while (queue.length > 0) {
+            const widget = queue.shift();
+
+            this.connections
+                .filter(
+                    (connection) =>
+                        connection.sourceWidget ===
+                        widget
+                )
+                .forEach(
+                    (connection) => {
+                        const target =
+                            connection.targetWidget;
+
+                        if (!visited.has(target)) {
+                            visited.add(target);
+                            queue.push(target);
+                        }
+                    }
+                );
+        }
+
+        return Array.from(visited);
+    }
+
+    getExecutionPlan(
+        mode = "workflow",
+        widget = null
+    ) {
+        if (mode === "selected") {
+            return {
+                mode,
+                widget,
+                order:
+                    widget
+                        ? [widget]
+                        : [],
+                hasCycle: false,
+                label:
+                    widget
+                        ? `single node · ${widget.title}`
+                        : "single node"
+            };
+        }
+
+        if (mode === "from-selected") {
+            const order =
+                this.getDownstreamWidgets(
+                    widget
+                );
+
+            const topology =
+                this.getTopologicalOrderForWidgets(
+                    order
+                );
+
+            return {
+                mode,
+                widget,
+                order:
+                    topology.order,
+                hasCycle:
+                    topology.hasCycle,
+                label:
+                    widget
+                        ? `from ${widget.title}`
+                        : "from selected node"
+            };
+        }
+
+        const topology =
+            this.getTopologicalOrder();
+
+        return {
+            mode: "workflow",
+            widget: null,
+            order:
+                topology.order,
+            hasCycle:
+                topology.hasCycle,
+            label: "full workflow"
+        };
+    }
+
+    getExecutionPlanValidationReport(
+        executionOrder,
+        {
+            mode = "workflow"
+        } = {}
+    ) {
+        if (mode === "workflow") {
+            return this.getWorkflowValidationReport();
+        }
+
+        const errors = [];
+        const warnings = [];
+        const executionSet =
+            new Set(executionOrder || []);
+
+        if (executionSet.size === 0) {
+            errors.push(
+                "Select a widget before using this run mode."
+            );
+
+            return {
+                valid: false,
+                errors,
+                warnings
+            };
+        }
+
+        const topology =
+            this.getTopologicalOrderForWidgets(
+                Array.from(executionSet)
+            );
+
+        if (topology.hasCycle) {
+            errors.push(
+                "The selected execution path contains a cycle."
+            );
+        }
+
+        executionSet.forEach(
+            (widget) => {
+                widget.inputs.forEach(
+                    (input) => {
+                        const incomingConnections =
+                            this.getIncomingConnections(
+                                widget,
+                                input.id
+                            );
+
+                        const internalSources =
+                            incomingConnections.filter(
+                                (connection) =>
+                                    executionSet.has(
+                                        connection.sourceWidget
+                                    )
+                            );
+
+                        const externalSources =
+                            incomingConnections.filter(
+                                (connection) =>
+                                    !executionSet.has(
+                                        connection.sourceWidget
+                                    )
+                            );
+
+                        const manualValue =
+                            String(
+                                input.manualValue ?? ""
+                            ).trim();
+
+                        const externalHasValue =
+                            externalSources.some(
+                                (connection) => {
+                                    const output =
+                                        connection.sourceWidget
+                                            .getOutputById(
+                                                connection.sourcePortId
+                                            );
+
+                                    return (
+                                        output &&
+                                        String(
+                                            output.value ?? ""
+                                        ).trim() !== ""
+                                    );
+                                }
+                            );
+
+                        if (
+                            input.required !== false &&
+                            internalSources.length === 0 &&
+                            !externalHasValue &&
+                            manualValue === ""
+                        ) {
+                            errors.push(
+                                `"${widget.title}" needs a current value for input "${input.name}" before this partial run can start.`
+                            );
+                        }
+
+                        if (
+                            incomingConnections.length === 0 &&
+                            manualValue !== "" &&
+                            this.getPortDataType(input) !==
+                                "Any"
+                        ) {
+                            try {
+                                this.coerceValueForPort(
+                                    input.manualValue,
+                                    input
+                                );
+                            } catch (error) {
+                                errors.push(
+                                    `"${widget.title}" input "${input.name}" is invalid: ${error.message}`
+                                );
+                            }
+                        }
+
+                        incomingConnections.forEach(
+                            (connection) => {
+                                const sourcePort =
+                                    connection.sourceWidget
+                                        .getOutputById(
+                                            connection.sourcePortId
+                                        );
+
+                                if (!sourcePort) {
+                                    errors.push(
+                                        `A connection into "${widget.title}" references a missing source output.`
+                                    );
+                                    return;
+                                }
+
+                                const compatibility =
+                                    this.getPortTypeCompatibility(
+                                        sourcePort,
+                                        input
+                                    );
+
+                                if (!compatibility.compatible) {
+                                    errors.push(
+                                        `Type mismatch into "${widget.title} / ${input.name}": ${compatibility.sourceType} cannot feed ${compatibility.targetType}.`
+                                    );
+                                } else if (
+                                    compatibility.level ===
+                                    "convertible"
+                                ) {
+                                    warnings.push(
+                                        `"${widget.title} / ${input.name}" will convert ${compatibility.sourceType} to ${compatibility.targetType} at runtime.`
+                                    );
+                                }
+                            }
+                        );
+                    }
+                );
+
+                if (widget.type === "Decision") {
+                    const expression =
+                        String(
+                            widget.decisionExpression ||
+                            ""
+                        ).trim();
+
+                    if (expression === "") {
+                        errors.push(
+                            `Decision widget "${widget.title}" has no condition.`
+                        );
+                    }
+
+                    if (
+                        !widget.getDecisionTrueOutput() ||
+                        !widget.getDecisionFalseOutput()
+                    ) {
+                        errors.push(
+                            `Decision widget "${widget.title}" needs valid TRUE and FALSE outputs.`
+                        );
+                    }
+                }
+
+                if (
+                    widget.language === "Expression" &&
+                    widget.type !== "Start" &&
+                    widget.type !== "End" &&
+                    widget.type !== "Decision" &&
+                    String(widget.source || "").trim() === ""
+                ) {
+                    warnings.push(
+                        `"${widget.title}" has an empty Expression source and will pass through its first input.`
+                    );
+                }
+            }
+        );
+
+        return {
+            valid:
+                errors.length === 0,
+            errors,
+            warnings
+        };
+    }
+
+    prepareBranchStateForExecutionPlan(
+        executionOrder
+    ) {
+        const executionSet =
+            new Set(executionOrder || []);
+
+        this.clearBranchExecutionState({
+            clearDecisionResults: true
+        });
+        this.hasBranchExecutionState = true;
+
+        this.connections.forEach(
+            (connection) => {
+                if (
+                    executionSet.has(
+                        connection.targetWidget
+                    ) &&
+                    !executionSet.has(
+                        connection.sourceWidget
+                    )
+                ) {
+                    this.setConnectionBranchState(
+                        connection,
+                        "active"
+                    );
+                }
+            }
+        );
+    }
+
+    runSelectedWidget(
+        widget = this.selectedWidget
+    ) {
+        if (!widget) {
+            void this.showMessageDialog({
+                title: "Select a Widget",
+                message:
+                    "Select the widget you want to run, then choose Run Selected Node.",
+                tone: "info",
+                confirmLabel: "Got it"
+            });
+            return;
+        }
+
+        return this.runWorkflow({
+            mode: "selected",
+            widget
+        });
+    }
+
+    runFromSelectedWidget(
+        widget = this.selectedWidget
+    ) {
+        if (!widget) {
+            void this.showMessageDialog({
+                title: "Select a Widget",
+                message:
+                    "Select where execution should begin, then choose Run From Selected Node.",
+                tone: "info",
+                confirmLabel: "Got it"
+            });
+            return;
+        }
+
+        return this.runWorkflow({
+            mode: "from-selected",
+            widget
+        });
     }
 
     getWorkflowValidationReport() {
@@ -7931,6 +9341,13 @@ class Board {
             this.stopWorkflowRun();
         }
 
+        this.isWorkflowPaused = false;
+        this.currentExecutionMode = "idle";
+        this.currentExecutionWidgetIds = new Set();
+        this.currentExecutionLabel = "";
+        this.currentRunningWidget = null;
+        this.releaseWorkflowPauseWaiters();
+
         this.clearBranchExecutionState({
             clearDecisionResults: true
         });
@@ -7975,6 +9392,12 @@ class Board {
 
         this.executionRunId += 1;
         this.isWorkflowRunning = false;
+        this.isWorkflowPaused = false;
+        this.currentExecutionMode = "idle";
+        this.currentExecutionWidgetIds = new Set();
+        this.currentExecutionLabel = "";
+        this.currentRunningWidget = null;
+        this.releaseWorkflowPauseWaiters();
         this.setExecutionConsoleStatus(
             "stopped"
         );
@@ -8009,7 +9432,7 @@ class Board {
         milliseconds,
         runId
     ) {
-        const duration =
+        let remaining =
             Math.max(
                 0,
                 Math.min(
@@ -8018,25 +9441,39 @@ class Board {
                 )
             );
 
-        if (duration === 0) {
-            return;
-        }
-
-        await new Promise(
-            (resolve) => {
-                setTimeout(
-                    resolve,
-                    duration
-                );
-            }
+        await this.waitWhileWorkflowPaused(
+            runId
         );
 
-        if (
-            runId !==
-            this.executionRunId
-        ) {
-            throw new Error(
-                "Workflow run stopped."
+        while (remaining > 0) {
+            const slice =
+                Math.min(
+                    50,
+                    remaining
+                );
+
+            await new Promise(
+                (resolve) => {
+                    setTimeout(
+                        resolve,
+                        slice
+                    );
+                }
+            );
+
+            if (
+                runId !==
+                this.executionRunId
+            ) {
+                throw new Error(
+                    "Workflow run stopped."
+                );
+            }
+
+            remaining -= slice;
+
+            await this.waitWhileWorkflowPaused(
+                runId
             );
         }
     }
@@ -8611,13 +10048,31 @@ class Board {
         );
     }
 
-    async runWorkflow() {
+    async runWorkflow(
+        {
+            mode = "workflow",
+            widget = null
+        } = {}
+    ) {
         if (this.isWorkflowRunning) {
             return;
         }
 
+        const plan =
+            this.getExecutionPlan(
+                mode,
+                widget
+            );
+
         const report =
-            this.validateWorkflow(false);
+            this.getExecutionPlanValidationReport(
+                plan.order,
+                {
+                    mode: plan.mode
+                }
+            );
+
+        this.lastValidationReport = report;
 
         if (!report.valid) {
             this.setExecutionConsoleStatus(
@@ -8629,40 +10084,74 @@ class Board {
             );
 
             await this.showMessageDialog({
-                title: "Workflow Cannot Run",
+                title:
+                    plan.mode === "workflow"
+                        ? "Workflow Cannot Run"
+                        : "This Run Cannot Start",
                 message:
                     this.formatValidationReport(
                         report
                     ),
                 tone: "warning",
-                confirmLabel: "Review Workflow"
+                confirmLabel: "Review Setup"
             });
             return;
         }
 
-        const topology =
-            this.getTopologicalOrder();
+        if (plan.hasCycle) {
+            await this.showMessageDialog({
+                title: "Execution Path Has a Cycle",
+                message:
+                    "This execution mode cannot run because the selected path loops back on itself.",
+                tone: "warning",
+                confirmLabel: "Close"
+            });
+            return;
+        }
 
-        this.clearBranchExecutionState({
-            clearDecisionResults: true
-        });
-        this.hasBranchExecutionState = true;
+        const executionOrder =
+            plan.order;
+
+        this.prepareBranchStateForExecutionPlan(
+            executionOrder
+        );
 
         this.executionRunId += 1;
         const runId =
             this.executionRunId;
 
         this.isWorkflowRunning = true;
+        this.isWorkflowPaused = false;
+        this.currentExecutionMode =
+            plan.mode;
+        this.currentExecutionWidgetIds =
+            new Set(
+                executionOrder.map(
+                    (item) => item.id
+                )
+            );
+        this.currentExecutionLabel =
+            plan.label;
+        this.currentRunningWidget = null;
+
         this.setExecutionConsoleStatus(
             "running"
         );
         this.setExecutionConsoleOpen(true);
         this.updateRunControls();
+        this.updateStats();
+
+        const runTitle =
+            plan.mode === "workflow"
+                ? `Workflow run #${runId} started.`
+                : plan.mode === "selected"
+                    ? `Single-node run started: ${widget.title}.`
+                    : `Run-from-here started at ${widget.title}.`;
 
         this.appendExecutionLog(
             "info",
-            `Workflow run #${runId} started.`,
-            `${this.widgets.length} widget(s) · ${this.connections.length} connection(s)`
+            runTitle,
+            `${executionOrder.length} node(s) in this run · ${this.connections.length} total connection(s)`
         );
 
         if (report.warnings.length > 0) {
@@ -8681,18 +10170,23 @@ class Board {
             );
         }
 
-        this.widgets.forEach(
-            (widget) => {
-                widget.runtimeMs = 0;
-                widget.memoryKb = 0;
-                widget.lastError = "";
+        executionOrder.forEach(
+            (executionWidget) => {
+                executionWidget.runtimeMs = 0;
+                executionWidget.memoryKb = 0;
+                executionWidget.lastError = "";
 
-                if (widget.type === "Decision") {
-                    widget.lastDecisionResult = null;
+                if (
+                    executionWidget.type ===
+                    "Decision"
+                ) {
+                    executionWidget.lastDecisionResult =
+                        null;
                 }
 
-                widget.setStatus(
-                    widget.type === "Start"
+                executionWidget.setStatus(
+                    executionWidget.type ===
+                        "Start"
                         ? "idle"
                         : "waiting",
                     0,
@@ -8707,9 +10201,13 @@ class Board {
 
         try {
             for (
-                const widget of
-                topology.order
+                const executionWidget of
+                executionOrder
             ) {
+                await this.waitWhileWorkflowPaused(
+                    runId
+                );
+
                 if (
                     runId !==
                     this.executionRunId
@@ -8717,15 +10215,18 @@ class Board {
                     return;
                 }
 
+                this.currentRunningWidget =
+                    executionWidget;
+
                 if (
                     !this.shouldExecuteWidgetForBranches(
-                        widget
+                        executionWidget
                     )
                 ) {
-                    widget.inputs.forEach(
+                    executionWidget.inputs.forEach(
                         (input) => {
                             this.refreshInputValueFromConnections(
-                                widget,
+                                executionWidget,
                                 input.id,
                                 {
                                     activeOnly: true
@@ -8734,53 +10235,55 @@ class Board {
                         }
                     );
 
-                    widget.lastDecisionResult =
+                    executionWidget.lastDecisionResult =
                         null;
 
-                    widget.outputs.forEach(
+                    executionWidget.outputs.forEach(
                         (output) => {
                             output.value = "";
                         }
                     );
 
-                    widget.setStatus(
+                    executionWidget.setStatus(
                         "skipped",
                         0,
                         0
                     );
 
                     this.setWidgetOutgoingBranchStates(
-                        widget,
+                        executionWidget,
                         {
                             forceInactive: true
                         }
                     );
 
-                    widget.refreshContent();
+                    executionWidget.refreshContent();
                     this.updateStats();
 
                     this.appendExecutionLog(
                         "warning",
-                        `${widget.title} skipped.`,
+                        `${executionWidget.title} skipped.`,
                         "No active branch supplied all required inputs."
                     );
 
                     if (
                         this.selectedWidget ===
-                        widget
+                        executionWidget
                     ) {
                         this.showWidgetProperties(
-                            widget
+                            executionWidget
                         );
                     }
 
+                    this.currentRunningWidget =
+                        null;
                     continue;
                 }
 
-                widget.inputs.forEach(
+                executionWidget.inputs.forEach(
                     (input) => {
                         this.refreshInputValueFromConnections(
-                            widget,
+                            executionWidget,
                             input.id,
                             {
                                 activeOnly: true
@@ -8789,8 +10292,8 @@ class Board {
                     }
                 );
 
-                widget.refreshContent();
-                widget.setStatus(
+                executionWidget.refreshContent();
+                executionWidget.setStatus(
                     "running",
                     0,
                     0
@@ -8799,18 +10302,18 @@ class Board {
 
                 this.appendExecutionLog(
                     "node",
-                    `${widget.title} started.`,
+                    `${executionWidget.title} started.`,
                     this.getWidgetInputLogSummary(
-                        widget
+                        executionWidget
                     )
                 );
 
                 if (
                     this.selectedWidget ===
-                    widget
+                    executionWidget
                 ) {
                     this.showWidgetProperties(
-                        widget
+                        executionWidget
                     );
                 }
 
@@ -8821,11 +10324,11 @@ class Board {
                     Math.max(
                         0,
                         Number(
-                            widget.executionDelayMs
+                            executionWidget.executionDelayMs
                         ) || 0
                     ) +
                     this.getScriptDelay(
-                        widget
+                        executionWidget
                     );
 
                 await this.waitForExecution(
@@ -8833,59 +10336,62 @@ class Board {
                     runId
                 );
 
+                await this.waitWhileWorkflowPaused(
+                    runId
+                );
+
                 let decisionInfo = null;
 
-                if (widget.type === "Decision") {
+                if (
+                    executionWidget.type ===
+                    "Decision"
+                ) {
                     const context =
                         this.buildInputContext(
-                            widget
+                            executionWidget
                         );
 
                     decisionInfo =
                         this.executeDecisionBranch(
-                            widget,
+                            executionWidget,
                             context
                         );
                 } else {
                     if (
-                        widget.type !== "Start" ||
+                        executionWidget.type !==
+                            "Start" ||
                         (
-                            widget.source &&
-                            widget.language !==
+                            executionWidget.source &&
+                            executionWidget.language !==
                                 "Pass-through"
                         )
                     ) {
                         const context =
                             this.buildInputContext(
-                                widget
+                                executionWidget
                             );
 
                         const result =
                             this.interpretWidgetSource(
-                                widget,
+                                executionWidget,
                                 context
                             );
 
                         this.applyExecutionResult(
-                            widget,
+                            executionWidget,
                             result
                         );
                     }
 
-                    /*
-                     * Normal nodes activate every outgoing edge after they
-                     * execute. Only Decision nodes selectively activate one
-                     * configured output branch.
-                     */
                     this.setWidgetOutgoingBranchStates(
-                        widget
+                        executionWidget
                     );
                 }
 
-                widget.outputs.forEach(
+                executionWidget.outputs.forEach(
                     (output) => {
                         this.propagateOutputValue(
-                            widget,
+                            executionWidget,
                             output.id,
                             {
                                 activeOnly: true
@@ -8900,16 +10406,16 @@ class Board {
 
                 const memory =
                     this.estimateWidgetMemory(
-                        widget
+                        executionWidget
                     );
 
-                widget.setStatus(
+                executionWidget.setStatus(
                     "finished",
                     runtime,
                     memory
                 );
 
-                widget.refreshContent();
+                executionWidget.refreshContent();
                 this.updateStats();
 
                 const branchSummary =
@@ -8919,18 +10425,21 @@ class Board {
 
                 this.appendExecutionLog(
                     "success",
-                    `${widget.title} finished.`,
-                    `${this.getWidgetOutputLogSummary(widget)}${branchSummary} · ${runtime.toFixed(1)} ms · ${memory.toFixed(1)} KB`
+                    `${executionWidget.title} finished.`,
+                    `${this.getWidgetOutputLogSummary(executionWidget)}${branchSummary} · ${runtime.toFixed(1)} ms · ${memory.toFixed(1)} KB`
                 );
 
                 if (
                     this.selectedWidget ===
-                    widget
+                    executionWidget
                 ) {
                     this.showWidgetProperties(
-                        widget
+                        executionWidget
                     );
                 }
+
+                this.currentRunningWidget =
+                    null;
             }
         } catch (error) {
             if (
@@ -8943,9 +10452,10 @@ class Board {
             runFailed = true;
 
             const runningWidget =
-                this.widgets.find(
-                    (widget) =>
-                        widget.status ===
+                this.currentRunningWidget ||
+                executionOrder.find(
+                    (executionWidget) =>
+                        executionWidget.status ===
                         "running"
                 );
 
@@ -8980,50 +10490,69 @@ class Board {
                 confirmLabel: "Close"
             });
         } finally {
-            if (
+            const isCurrentRun =
                 runId ===
-                this.executionRunId
-            ) {
+                this.executionRunId;
+
+            if (isCurrentRun) {
                 this.isWorkflowRunning = false;
+                this.isWorkflowPaused = false;
+                this.currentRunningWidget = null;
+                this.releaseWorkflowPauseWaiters();
             }
 
             this.lastRunRuntimeMs =
-                this.widgets.reduce(
-                    (total, widget) =>
+                executionOrder.reduce(
+                    (total, executionWidget) =>
                         total +
                         (
                             Number(
-                                widget.runtimeMs
+                                executionWidget.runtimeMs
                             ) || 0
                         ),
                     0
                 );
 
             this.lastRunMemoryKb =
-                this.widgets.reduce(
-                    (total, widget) =>
+                executionOrder.reduce(
+                    (total, executionWidget) =>
                         total +
                         (
                             Number(
-                                widget.memoryKb
+                                executionWidget.memoryKb
                             ) || 0
                         ),
                     0
                 );
 
             if (
-                runId ===
-                    this.executionRunId &&
+                isCurrentRun &&
                 !runFailed
             ) {
                 this.setExecutionConsoleStatus(
                     "finished"
                 );
+
+                const finishedTitle =
+                    plan.mode === "workflow"
+                        ? `Workflow run #${runId} completed.`
+                        : plan.mode === "selected"
+                            ? `${widget.title} completed.`
+                            : `Run from ${widget.title} completed.`;
+
                 this.appendExecutionLog(
                     "success",
-                    `Workflow run #${runId} completed.`,
+                    finishedTitle,
                     `${this.lastRunRuntimeMs.toFixed(1)} ms total runtime · ${this.lastRunMemoryKb.toFixed(1)} KB estimated memory`
                 );
+            }
+
+            if (isCurrentRun) {
+                this.currentExecutionMode =
+                    "idle";
+                this.currentExecutionWidgetIds =
+                    new Set();
+                this.currentExecutionLabel = "";
             }
 
             this.updateRunControls();

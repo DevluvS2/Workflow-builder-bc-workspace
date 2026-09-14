@@ -2326,3 +2326,173 @@ button {
         grid-template-columns: 1fr;
     }
 }
+
+
+/* =========================================================
+   Guided interface tutorial
+   ========================================================= */
+.interface-tutorial-layer { position:fixed; inset:0; z-index:200000; pointer-events:auto; font-family:Arial,Helvetica,sans-serif; }
+.interface-tutorial-highlight { position:fixed; border:2px solid #60a5fa; border-radius:9px; background:rgb(255 255 255 / 3%); box-shadow:0 0 0 9999px rgb(15 23 42 / 68%),0 0 0 5px rgb(37 99 235 / 16%),0 8px 28px rgb(0 0 0 / 20%); pointer-events:none; transition:left 150ms ease,top 150ms ease,width 150ms ease,height 150ms ease; }
+.interface-tutorial-highlight.tutorial-highlight-fullscreen { border:none; border-radius:0; background:transparent; box-shadow:0 0 0 9999px rgb(15 23 42 / 72%); }
+.interface-tutorial-card { position:fixed; width:min(420px,calc(100vw - 32px)); max-height:min(520px,calc(100vh - 32px)); overflow:auto; padding:18px; border:1px solid #475569; border-radius:10px; background:#fff; color:#1f2937; box-shadow:0 18px 48px rgb(0 0 0 / 30%); z-index:200001; }
+.interface-tutorial-card-top { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
+.interface-tutorial-progress { display:inline-flex; align-items:center; min-height:24px; padding:3px 8px; border-radius:999px; background:#eff6ff; color:#1d4ed8; font-size:11px; font-weight:700; }
+.interface-tutorial-skip { padding:4px 6px; border:none; background:transparent; color:#64748b; font-size:12px; }
+.interface-tutorial-skip:hover { color:#1f2937; text-decoration:underline; }
+.interface-tutorial-card h2 { margin:0 0 10px; color:#0f172a; font-size:19px; line-height:1.25; }
+.interface-tutorial-card p { margin:0; color:#475569; font-size:13px; line-height:1.6; }
+.interface-tutorial-key-hint { margin-top:14px; padding-top:10px; border-top:1px solid #e2e8f0; color:#94a3b8; font-size:11px; }
+.interface-tutorial-actions { display:flex; justify-content:space-between; gap:10px; margin-top:14px; }
+.interface-tutorial-actions button { min-width:96px; padding:8px 12px; border-radius:6px; font-weight:700; }
+.interface-tutorial-secondary { border:1px solid #cbd5e1; background:#fff; color:#475569; }
+.interface-tutorial-secondary:hover:not(:disabled) { background:#f8fafc; border-color:#94a3b8; }
+.interface-tutorial-secondary:disabled { opacity:.4; cursor:default; }
+.interface-tutorial-primary { border:1px solid #2563eb; background:#2563eb; color:#fff; }
+.interface-tutorial-primary:hover { background:#1d4ed8; }
+.dropdown-menu.tutorial-menu-open .dropdown-content { display:block; }
+@media (max-width:600px) { .interface-tutorial-card { width:calc(100vw - 24px); max-height:calc(100vh - 24px); padding:15px; } .interface-tutorial-actions button { min-width:0; flex:1; } }
+
+/* =========================================
+   Help tutorial sections
+   ========================================= */
+
+.help-dropdown-content {
+    min-width: 220px;
+    max-height: min(70vh, 420px);
+    overflow-y: auto;
+}
+
+.help-dropdown-content .tutorial-section-item:first-child {
+    font-weight: 700;
+}
+
+/* Keep tutorial cards short and easy to scan. */
+.interface-tutorial-card {
+    width: min(390px, calc(100vw - 32px));
+    max-height: min(460px, calc(100vh - 32px));
+    padding: 16px;
+}
+
+.interface-tutorial-card h2 {
+    margin-bottom: 8px;
+    font-size: 18px;
+}
+
+.interface-tutorial-card p {
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.interface-tutorial-progress {
+    max-width: 250px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* =========================================
+   Workflow run controls
+   ========================================= */
+
+.run-controls {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+
+    margin-left: 5px;
+    padding-left: 8px;
+
+    border-left:
+        1px solid
+        rgb(148 163 184 / 28%);
+}
+
+.run-toolbar-button .run-icon-fill {
+    fill: currentColor;
+    stroke: none;
+}
+
+.run-toolbar-button.running {
+    color: #bbf7d0 !important;
+    background-color:
+        rgb(22 163 74 / 12%) !important;
+}
+
+.run-toolbar-button.paused {
+    color: #fde68a !important;
+    background-color:
+        rgb(217 119 6 / 14%) !important;
+}
+
+.stop-run-toolbar-button:hover:not(:disabled) {
+    color: #fecaca !important;
+    background-color:
+        rgb(220 38 38 / 16%) !important;
+}
+
+.dropdown-content button:disabled {
+    opacity: 0.38;
+    cursor: default;
+    background-color: transparent;
+}
+
+.execution-console-status.status-paused {
+    border-color: rgb(251 191 36 / 42%);
+    background-color: rgb(217 119 6 / 18%);
+    color: #fde68a;
+}
+
+/* =========================================================
+   Workflow dropdown command icons
+   ========================================================= */
+
+.workflow-dropdown-content .workflow-command-item {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 8px;
+    min-height: 36px;
+    padding: 7px 12px 7px 10px;
+}
+
+.workflow-menu-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    color: currentColor;
+}
+
+.workflow-menu-icon svg {
+    width: 18px;
+    height: 18px;
+    overflow: visible;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.workflow-menu-icon.fill-icon svg {
+    fill: currentColor;
+    stroke: none;
+}
+
+.workflow-menu-label {
+    min-width: 0;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.workflow-menu-shortcut {
+    color: #94a3b8;
+    font-size: 11px;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.workflow-command-item:disabled .workflow-menu-shortcut {
+    color: currentColor;
+}
