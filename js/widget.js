@@ -130,13 +130,13 @@ class Widget {
             const trueOutput =
                 this.createPortRecord(
                     "output",
-                    "true"
+                    "output 1"
                 );
 
             const falseOutput =
                 this.createPortRecord(
                     "output",
-                    "false"
+                    "output 2"
                 );
 
             this.outputs = [
@@ -869,26 +869,6 @@ class Widget {
                 text.className =
                     "widget-io-text";
 
-                if (decisionBranchRole) {
-                    const branchBadge =
-                        document.createElement(
-                            "span"
-                        );
-
-                    branchBadge.className =
-                        `widget-branch-badge branch-${decisionBranchRole}`;
-
-                    branchBadge.textContent =
-                        decisionBranchRole ===
-                        "true"
-                            ? "TRUE"
-                            : "FALSE";
-
-                    row.appendChild(
-                        branchBadge
-                    );
-                }
-
                 const prefix =
                     direction === "input"
                         ? "In"
@@ -914,11 +894,6 @@ class Widget {
 
                 let rowText =
                     `${prefix} ${port.name}`;
-
-                if (normalizedType !== "Any") {
-                    rowText +=
-                        ` · ${normalizedType}`;
-                }
 
                 if (hasValue) {
                     rowText +=
@@ -1165,7 +1140,7 @@ class Widget {
             idle: "Idle",
             waiting: "Waiting",
             running: "Running",
-            finished: "Finished",
+            finished: "Done",
             error: "Failed",
             stopped: "Stopped",
             skipped: "Skipped"
@@ -1173,7 +1148,7 @@ class Widget {
 
         const symbols = {
             idle: "",
-            waiting: "",
+            waiting: "·",
             running: "▶",
             finished: "✓",
             error: "×",
@@ -1212,7 +1187,7 @@ class Widget {
                     "boolean"
             ) {
                 tooltip +=
-                    ` · Branch: ${this.lastDecisionResult ? "TRUE" : "FALSE"}`;
+                    ` · Branch: ${this.lastDecisionResult ? "condition met" : "otherwise"}`;
             }
 
             if (
@@ -1256,7 +1231,7 @@ class Widget {
                     "boolean"
             ) {
                 text +=
-                    ` Branch ${this.lastDecisionResult ? "true" : "false"}.`;
+                    ` Branch ${this.lastDecisionResult ? "condition met" : "otherwise"}.`;
             }
 
             if (
@@ -1911,8 +1886,8 @@ class Widget {
             while (this.outputs.length < 2) {
                 const defaultName =
                     this.outputs.length === 0
-                        ? "true"
-                        : "false";
+                        ? "output 1"
+                        : "output 2";
 
                 this.outputs.push(
                     this.createPortRecord(

@@ -73,11 +73,6 @@ class Connection {
             "workflow-connection"
         );
 
-        path.setAttribute(
-            "marker-end",
-            "url(#connection-arrow)"
-        );
-
         path.dataset.connectionId =
             this.id;
 

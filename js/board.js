@@ -34,7 +34,7 @@ class Board {
 
         /* Guided interface tutorial. */
         this.tutorialStorageKey =
-            "workflowBuilderInterfaceTutorialSeenV5";
+            "workflowBuilderInterfaceTutorialSeenProfessorBatch1V1";
         this.tutorialActive = false;
         this.tutorialStepIndex = 0;
         this.tutorialSteps = [];
@@ -579,7 +579,7 @@ class Board {
         });
 
         const resetStatusMenuItem = createWorkflowCommandItem({
-            label: "Reset Status Labels",
+            label: "Reset Workflow State",
             icon: `
                 <svg viewBox="0 0 24 24">
                     <path d="M19 8A8 8 0 1 0 20 14"></path>
@@ -1089,7 +1089,8 @@ class Board {
         widgetTypes.forEach((type) => {
             const button = document.createElement("button");
             button.className = "widget-library-button";
-            button.textContent = `Add ${type}`;
+            button.textContent = type;
+            button.title = `Create ${type} widget`;
 
             button.addEventListener("click", () => {
                 this.createWidget(type);
@@ -1136,84 +1137,6 @@ class Board {
         connectionLayer.setAttribute(
             "height",
             String(this.workspaceHeight)
-        );
-
-        /*
-        * SVG definitions let us create reusable
-        * graphics such as arrowheads.
-        */
-        const definitions =
-            document.createElementNS(
-                svgNamespace,
-                "defs"
-            );
-
-        const arrowMarker =
-            document.createElementNS(
-                svgNamespace,
-                "marker"
-            );
-
-        arrowMarker.setAttribute(
-            "id",
-            "connection-arrow"
-        );
-
-        arrowMarker.setAttribute(
-            "viewBox",
-            "0 0 10 10"
-        );
-
-        arrowMarker.setAttribute(
-            "refX",
-            "9"
-        );
-
-        arrowMarker.setAttribute(
-            "refY",
-            "5"
-        );
-
-        arrowMarker.setAttribute(
-            "markerWidth",
-            "7"
-        );
-
-        arrowMarker.setAttribute(
-            "markerHeight",
-            "7"
-        );
-
-        arrowMarker.setAttribute(
-            "orient",
-            "auto-start-reverse"
-        );
-
-        const arrowPath =
-            document.createElementNS(
-                svgNamespace,
-                "path"
-            );
-
-        arrowPath.setAttribute(
-            "d",
-            "M 0 0 L 10 5 L 0 10 z"
-        );
-
-        arrowPath.classList.add(
-            "connection-arrow-shape"
-        );
-
-        arrowMarker.appendChild(
-            arrowPath
-        );
-
-        definitions.appendChild(
-            arrowMarker
-        );
-
-        connectionLayer.appendChild(
-            definitions
         );
 
         workspace.appendChild(
@@ -3720,7 +3643,7 @@ class Board {
         meta.className =
             "data-inspector-meta";
         meta.textContent =
-            `${normalizedType} · ${this.getDataPreviewSummary(previewValue)}` +
+            this.getDataPreviewSummary(previewValue) +
             (subtitle ? ` · ${subtitle}` : "");
 
         headingWrap.appendChild(heading);
@@ -4121,11 +4044,9 @@ class Board {
     }
 
     getPortDataType(port) {
-        return Widget.normalizeDataType(
-            port && port.dataType
-                ? port.dataType
-                : "Any"
-        );
+        // Ports are untyped in this version. Legacy dataType values remain in
+        // imported JSON for compatibility until the production migration.
+        return "Any";
     }
 
     getPortTypeCompatibility(
@@ -5000,7 +4921,8 @@ class Board {
         positionRow.appendChild(positionText);
 
         general.body.appendChild(titleRow);
-        general.body.appendChild(typeRow);
+        // Keep the legacy role internally for existing workflows, but do not
+        // expose it as an editable widget "type" in the simplified UI.
         general.body.appendChild(positionRow);
         this.propertiesPanelContent.appendChild(
             general.section
@@ -5219,7 +5141,7 @@ class Board {
                                                 : "";
 
                                 option.textContent =
-                                    `${compatibilityPrefix}${sourceWidget.title} / ${output.name} [${this.getPortDataType(output)}]`;
+                                    `${compatibilityPrefix}${sourceWidget.title} / ${output.name}`;
 
                                 option.disabled =
                                     alreadyConnected ||
@@ -5346,7 +5268,7 @@ class Board {
                                 );
 
                             sourceText.textContent =
-                                `${index + 1}. ${connection.sourceWidget.title} / ${sourceOutput ? sourceOutput.name : "output"} [${sourceOutput ? this.getPortDataType(sourceOutput) : "Missing"}]${compatibility.level === "convertible" ? " ↝ convert" : !compatibility.compatible ? " ⛔ incompatible" : ""}`;
+                                `${index + 1}. ${connection.sourceWidget.title} / ${sourceOutput ? sourceOutput.name : "missing output"}`;
 
                             row.classList.toggle(
                                 "type-incompatible",
@@ -5423,7 +5345,7 @@ class Board {
                         ? input.manualValue
                         : "";
                 manualValue.placeholder =
-                    `Manual ${this.getPortDataType(input)} value`;
+                    "Manual value";
                 manualValue.disabled =
                     incomingConnections.length > 0;
 
@@ -5548,7 +5470,7 @@ class Board {
                 );
 
                 card.appendChild(nameInput);
-                card.appendChild(typeField);
+                // Port data types are hidden in the simplified workflow UI.
                 card.appendChild(sourceSelect);
                 card.appendChild(connectedSources);
                 card.appendChild(multiSourceHint);
@@ -5841,16 +5763,16 @@ class Board {
                         ? (
                             output.id ===
                                 widget.decisionTrueOutputId
-                                ? "TRUE branch · "
+                                ? "Condition met · "
                                 : output.id ===
                                     widget.decisionFalseOutputId
-                                    ? "FALSE branch · "
-                                    : "Unassigned branch · "
+                                    ? "Otherwise · "
+                                    : "Other output · "
                         )
                         : "";
 
                 outputMeta.textContent =
-                    `${branchRole}${this.getPortDataType(output)} · ${connectionCount} downstream connection${connectionCount === 1 ? "" : "s"}${incompatibleCount > 0 ? ` · ${incompatibleCount} incompatible` : ""}`;
+                    `${branchRole}${connectionCount} downstream connection${connectionCount === 1 ? "" : "s"}`;
 
                 const removeButton =
                     document.createElement(
@@ -5882,7 +5804,7 @@ class Board {
                 );
 
                 card.appendChild(nameInput);
-                card.appendChild(typeField);
+                // Port data types are hidden in the simplified workflow UI.
                 card.appendChild(valueInput);
                 card.appendChild(outputMeta);
                 card.appendChild(removeButton);
@@ -6031,7 +5953,7 @@ class Board {
                             option.value =
                                 output.id;
                             option.textContent =
-                                `${output.name} [${this.getPortDataType(output)}]`;
+                                output.name;
                             option.disabled =
                                 output.id ===
                                     otherOutputId;
@@ -6078,7 +6000,7 @@ class Board {
 
             branchGrid.appendChild(
                 createBranchSelector(
-                    "TRUE output",
+                    "When condition is met",
                     "true",
                     widget.decisionTrueOutputId,
                     widget.decisionFalseOutputId
@@ -6087,7 +6009,7 @@ class Board {
 
             branchGrid.appendChild(
                 createBranchSelector(
-                    "FALSE output",
+                    "Otherwise",
                     "false",
                     widget.decisionFalseOutputId,
                     widget.decisionTrueOutputId
@@ -6865,24 +6787,8 @@ class Board {
                 `${connection.sourceWidget.title} / ${sourcePort ? sourcePort.name : "output"}`
             ],
             [
-                "Output type",
-                sourcePort
-                    ? this.getPortDataType(sourcePort)
-                    : "Missing"
-            ],
-            [
                 "To",
                 `${connection.targetWidget.title} / ${targetPort ? targetPort.name : "input"}`
-            ],
-            [
-                "Input type",
-                targetPort
-                    ? this.getPortDataType(targetPort)
-                    : "Missing"
-            ],
-            [
-                "Compatibility",
-                compatibility.message
             ],
             [
                 "Current value",
@@ -8740,7 +8646,7 @@ class Board {
                 title: "Workflow",
                 target: '[data-tour="workflow-menu"]',
                 prepare: openMenu("workflow-menu"),
-                text: "Run the whole workflow, one selected node, or everything after a selected node. You can also pause, resume, stop, validate, or reset statuses."
+                text: "Run all or part of your workflow, pause or stop it, and reset calculated values without deleting the graph."
             },
             {
                 sections: ["research", "basics"],
@@ -8818,7 +8724,7 @@ class Board {
                         this.togglePanel("left");
                     }
                 },
-                text: "Start provides values. Process changes data. Decision chooses a branch. End receives the result."
+                text: "Choose a starting layout from the library, then rename and customize its inputs and outputs."
             },
             {
                 sections: ["canvas"],
@@ -8898,14 +8804,14 @@ class Board {
                 title: "Basic properties",
                 target: '[data-tour="properties-general"]',
                 prepare: showProps("properties-general"),
-                text: "Change the widget title and type here. Position shows where the widget sits on the canvas."
+                text: "Rename the widget here. Position shows where it is on the canvas."
             },
             {
                 sections: ["properties", "io"],
                 title: "Inputs",
                 target: '[data-tour="properties-inputs"]',
                 prepare: showProps("properties-inputs"),
-                text: "Name and type each input. The Source dropdown can connect another node automatically. Add, remove, or mark inputs Required."
+                text: "Name inputs, connect a source from the dropdown, or enter a value. Add and remove inputs here."
             },
             {
                 sections: ["properties", "io"],
@@ -8919,14 +8825,14 @@ class Board {
                 title: "Outputs",
                 target: '[data-tour="properties-outputs"]',
                 prepare: showProps("properties-outputs"),
-                text: "Name and type outputs here. Start nodes can set starting values, and one output can feed many other nodes."
+                text: "Name outputs here. Set starting values in Start widgets; one output can feed several inputs."
             },
             {
                 sections: ["properties", "io", "scripts"],
-                title: "Data types",
+                title: "Values",
                 target: '[data-tour="properties-inputs"]',
                 prepare: showProps("properties-inputs"),
-                text: "Any is flexible. String, Number, Boolean, Array, and JSON add type checks so bad connections are easier to catch."
+                text: "Inputs and outputs carry values directly. Click a populated value to inspect arrays or objects."
             },
             {
                 sections: ["properties", "scripts"],
@@ -8984,6 +8890,13 @@ class Board {
                 target: '[data-tour="properties-actions"]',
                 prepare: showProps("properties-actions"),
                 text: "Run This Node tests only the selected widget. Run From Here continues through its downstream path. Full Run executes everything."
+            },
+            {
+                sections: ["run"],
+                title: "Reset workflow state",
+                target: '[data-tour="workflow-menu"]',
+                prepare: openMenu("workflow-menu"),
+                text: "Reset clears results, statuses, and metrics but keeps your setup and run history."
             },
             {
                 sections: ["run", "console"],
@@ -10613,53 +10526,92 @@ class Board {
         return report;
     }
 
-    resetWorkflowStatuses() {
-        if (this.isWorkflowRunning) {
-            this.stopWorkflowRun();
+    async resetWorkflowState() {
+        const hasExecutionResults =
+            this.widgets.some((widget) =>
+                widget.runtimeMs > 0 ||
+                widget.memoryKb > 0 ||
+                Boolean(widget.lastError) ||
+                widget.lastRunSignature !== null ||
+                ["running", "finished", "error", "skipped", "stopped"]
+                    .includes(widget.status)
+            );
+
+        if (hasExecutionResults) {
+            const confirmed = await this.showConfirmDialog({
+                title: "Reset Workflow State?",
+                message: "Clear calculated values, statuses, and metrics? Your starting values, settings, widgets, connections, and run history will stay.",
+                confirmLabel: "Reset State"
+            });
+            if (!confirmed) return;
         }
 
+        this.recordHistoryState();
+        if (this.isWorkflowRunning) this.stopWorkflowRun();
         this.isWorkflowPaused = false;
         this.currentExecutionMode = "idle";
         this.currentExecutionWidgetIds = new Set();
         this.currentExecutionLabel = "";
         this.currentRunningWidget = null;
         this.releaseWorkflowPauseWaiters();
+        this.clearBranchExecutionState({ clearDecisionResults: true });
 
-        this.clearBranchExecutionState({
-            clearDecisionResults: true
+        this.connections.forEach((connection) => {
+            connection.lastValue = undefined;
+            connection.lastUpdatedAt = null;
+            connection.lastRunId = null;
+            connection.element?.classList.remove("connection-transfer-active");
         });
 
-        this.widgets.forEach(
-            (widget) => {
-                widget.setStatus(
-                    widget.type === "Start"
-                        ? "idle"
-                        : "waiting",
-                    0,
-                    0,
-                    ""
-                );
+        this.widgets.forEach((widget) => {
+            // A Start widget owns researcher-entered initial output values.
+            // Other outputs are generated and should be cleared.
+            if (widget.type !== "Start") {
+                widget.outputs.forEach((output) => {
+                    output.value = "";
+                });
             }
-        );
+
+            widget.inputs.forEach((input) => {
+                const connected = this.connections.some((connection) =>
+                    connection.targetWidget === widget &&
+                    connection.targetPortId === input.id
+                );
+                input.value = connected ? "" : (input.manualValue ?? "");
+            });
+
+            widget.lastRunSignature = null;
+            widget.lastDecisionResult = null;
+            widget.setStatus(
+                widget.type === "Start" ? "idle" : "waiting",
+                0,
+                0,
+                ""
+            );
+            widget.refreshContent();
+        });
 
         this.lastRunRuntimeMs = 0;
         this.lastRunMemoryKb = 0;
-        this.setExecutionConsoleStatus(
-            "idle"
-        );
+        this.lastValidationReport = { valid: true, errors: [], warnings: [] };
+        this.setExecutionConsoleStatus("idle");
         this.appendExecutionLog(
             "info",
-            "Workflow status labels reset."
+            "Workflow state reset.",
+            "Calculated values and metrics cleared; starting values and the workflow were kept."
         );
+        this.updateRunControls();
         this.updateStats();
-
-        if (this.selectedWidget) {
-            this.showWidgetProperties(
-                this.selectedWidget
-            );
-        }
-
+        this.updateWorkflowMap();
+        if (this.selectedWidget) this.showWidgetProperties(this.selectedWidget);
+        if (this.selectedConnection) this.showConnectionProperties(this.selectedConnection);
         this.scheduleSave();
+    }
+
+    // Preserve the previous method name for existing menus/commands while
+    // migrating those labels to the clearer Reset Workflow State wording.
+    resetWorkflowStatuses() {
+        return this.resetWorkflowState();
     }
 
     stopWorkflowRun() {

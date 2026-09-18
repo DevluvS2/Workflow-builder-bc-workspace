@@ -3960,3 +3960,81 @@ body {
         animation: none;
     }
 }
+
+/* =========================================================
+   FIX: top-menu dropdown text visibility
+   The centralized light dropdown surface must use dark text.
+   ========================================================= */
+.dropdown-content button,
+.dropdown-content .dropdown-check-item {
+    color: var(--ui-text);
+    background: transparent;
+}
+
+.dropdown-content button:hover,
+.dropdown-content button:focus-visible,
+.dropdown-content .dropdown-check-item:hover,
+.dropdown-content .dropdown-check-item:focus-within {
+    color: var(--ui-text);
+    background: var(--ui-surface-muted);
+}
+
+.dropdown-content button:disabled,
+.dropdown-content button:disabled:hover {
+    color: #94a3b8;
+    background: transparent;
+}
+
+/* =========================================================
+   Professor feedback · Batch 1: quiet canvas and clear status
+   ========================================================= */
+/* No directional arrowhead: the visible connection ends as a clean line. */
+.connection-arrow-shape { display: none; }
+
+/* The former port-type colors are intentionally neutralized. The engine
+   still recognizes legacy saved port metadata during the transition. */
+.widget-port[data-data-type] {
+    border-color: var(--ui-border-strong, #64748b);
+    background-color: var(--ui-surface, #fff);
+}
+.widget-port.connection-target {
+    border-color: #15803d;
+    background-color: #dcfce7;
+}
+.widget-port.connection-target-incompatible {
+    border-color: #b91c1c;
+    background-color: #fee2e2;
+}
+
+/* Small status dots use both a color and an accessible shape / tooltip. */
+.widget-status-indicator.status-idle {
+    border-color: #64748b;
+    background-color: #94a3b8;
+}
+.widget-status-indicator.status-waiting {
+    border-color: #b45309;
+    background-color: #f59e0b;
+    color: #111827;
+}
+.widget-status-indicator.status-running {
+    border-color: #b91c1c;
+    background-color: #dc2626;
+    color: #fff;
+}
+.widget-status-indicator.status-finished {
+    border-color: #166534;
+    background-color: #15803d;
+    color: #fff;
+}
+.widget-status-indicator.status-error {
+    border-color: #7f1d1d;
+    background-color: #991b1b;
+    color: #fff;
+    outline: 1px solid #7f1d1d;
+    outline-offset: 1px;
+}
+
+/* No baked-in preset icon: user-uploaded widget icons arrive in Batch 2. */
+.widget[data-widget-type="Decision"] .widget-title::before {
+    content: none;
+}
