@@ -4038,3 +4038,44 @@ body {
 .widget[data-widget-type="Decision"] .widget-title::before {
     content: none;
 }
+
+/* Professor feedback · Batch 2: accessible, restrained appearance options. */
+.widget { border-color: var(--widget-border-custom, #64748b); }
+.widget-title { background-color: var(--widget-header-custom, #e2e8f0); }
+.widget.selected { border-color: #2563eb; }
+.widget-custom-icon {
+    display: inline-block; flex: 0 0 19px; width: 19px; height: 19px;
+    object-fit: contain; border-radius: 3px;
+}
+.widget-custom-icon[hidden] { display: none; }
+.workflow-connection,
+.workflow-connection.connection-branch-active {
+    stroke: var(--connection-custom, var(--workflow-connection-color, #64748b));
+}
+.workflow-connection.connection-peek-active {
+    stroke: var(--connection-hover-custom, var(--workflow-hover-color, #2563eb));
+}
+.workflow-connection.connection-selected { stroke: #2563eb; }
+.workflow-connection.connection-type-incompatible { stroke: #b91c1c; }
+.workflow-connection.connection-transfer-active { stroke: #2563eb; }
+.appearance-dialog { width: min(440px, calc(100vw - 32px)); max-height: 88vh; overflow-y: auto; padding: 20px; }
+.appearance-dialog .app-dialog-title { margin: 0 0 10px; }
+.appearance-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.appearance-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; font-size: 12px; font-weight: 650; }
+.appearance-field select, .appearance-color-select { min-width: 0; width: 100%; padding: 7px; border: 1px solid var(--ui-border); border-radius: var(--ui-control-radius); background: white; color: var(--ui-text); }
+.appearance-check { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 12px; }
+.appearance-check input { width: auto; }
+.widget-appearance-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.widget-appearance-fields label { min-width: 0; }
+.widget-icon-field input { max-width: 100%; font-size: 12px; }
+.appearance-remove-icon { padding: 6px 9px; margin-top: 6px; border: 1px solid var(--ui-border); border-radius: var(--ui-control-radius); background: white; color: var(--ui-text); }
+.appearance-remove-icon:disabled { opacity: .5; cursor: not-allowed; }
+.appearance-toolbar-button { margin-left: 4px; }
+@media (max-width: 480px) { .appearance-fields { grid-template-columns: 1fr; } }
+
+/* Miniature paths use the same user-configured colors as the main graph. */
+.workflow-map-connection, .workflow-map-connection.branch-active {
+    stroke: var(--mini-connection-custom, #64748b);
+}
+.workflow-map-connection.selected { stroke: #2563eb; }
+.workflow-map-connection.branch-inactive { stroke: #94a3b8; }

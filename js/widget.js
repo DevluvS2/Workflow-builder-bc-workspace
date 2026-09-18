@@ -49,6 +49,9 @@ class Widget {
         this.showStatus = true;
         this.collapsed = false;
         this.notes = "";
+        this.iconData = null;
+        this.headerColor = board.appearanceSettings?.widgetHeaderColor || "#e2e8f0";
+        this.borderColor = board.appearanceSettings?.widgetBorderColor || "#64748b";
 
         this.runtimeMs = 0;
         this.memoryKb = 0;
@@ -355,6 +358,18 @@ class Widget {
                 String(data.notes || "");
         }
 
+        // Accept only small raster data URLs: SVG/HTML and remote URLs are rejected.
+        this.iconData =
+            typeof data.iconData === "string" &&
+            /^data:image\/(?:png|jpeg|webp);base64,[a-zA-Z0-9+/=]+$/.test(data.iconData) &&
+            data.iconData.length <= 190000
+                ? data.iconData
+                : null;
+        this.headerColor =
+            this.board.normalizeAppearanceColor(data.headerColor, "widgetHeaderColor");
+        this.borderColor =
+            this.board.normalizeAppearanceColor(data.borderColor, "widgetBorderColor");
+
         if (
             data.lastRunSignature !==
             undefined
@@ -504,6 +519,12 @@ class Widget {
         headerElement.className =
             "widget-title";
 
+        const iconElement = document.createElement("img");
+        iconElement.className = "widget-custom-icon";
+        iconElement.alt = ""; // Decorative: adjacent title names the widget.
+        iconElement.draggable = false;
+        iconElement.hidden = true;
+
         const titleElement =
             document.createElement("span");
 
@@ -643,6 +664,7 @@ class Widget {
             collapseButton
         );
 
+        headerElement.appendChild(iconElement);
         headerElement.appendChild(
             titleElement
         );
@@ -684,6 +706,7 @@ class Widget {
 
         this.element = element;
         this.headerElement = headerElement;
+        this.iconElement = iconElement;
         this.titleElement = titleElement;
         this.contentElement = contentElement;
         this.statusElement = statusElement;
@@ -712,6 +735,14 @@ class Widget {
 
         this.element.dataset.widgetType =
             this.type;
+
+        this.element.style.setProperty("--widget-border-custom", this.borderColor);
+        this.headerElement.style.setProperty("--widget-header-custom", this.headerColor);
+        if (this.iconElement) {
+            this.iconElement.hidden = !this.iconData;
+            if (this.iconData) this.iconElement.src = this.iconData;
+            else this.iconElement.removeAttribute("src");
+        }
 
         this.element.classList.toggle(
             "collapsed",
@@ -2281,6 +2312,9 @@ class Widget {
 
             notes:
                 this.notes,
+            iconData: this.iconData,
+            headerColor: this.headerColor,
+            borderColor: this.borderColor,
 
             lastRunSignature:
                 this.lastRunSignature,

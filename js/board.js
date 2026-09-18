@@ -8,6 +8,9 @@ class Board {
 
         this.nextWidgetZIndex = 3;
 
+        // Global defaults are saved with the workflow; individual items can override them.
+        this.appearanceSettings = this.createDefaultAppearanceSettings();
+
         this.hoverPeekWidget = null;
         this.pinnedPeekWidget = null;
 
@@ -34,7 +37,7 @@ class Board {
 
         /* Guided interface tutorial. */
         this.tutorialStorageKey =
-            "workflowBuilderInterfaceTutorialSeenProfessorBatch1V1";
+            "workflowBuilderInterfaceTutorialSeenProfessorBatch2V1";
         this.tutorialActive = false;
         this.tutorialStepIndex = 0;
         this.tutorialSteps = [];
@@ -206,6 +209,194 @@ class Board {
         );
     }
 
+    createDefaultAppearanceSettings() {
+        return {
+            connectionColor: "#64748b",
+            hoverColor: "#2563eb",
+            widgetHeaderColor: "#e2e8f0",
+            widgetBorderColor: "#64748b"
+        };
+    }
+
+    getAppearancePalettes() {
+        return {
+            connectionColor: {
+                "Gray": "#64748b", "Blue": "#2563eb",
+                "Green": "#15803d", "Red": "#b91c1c"
+            },
+            hoverColor: {
+                "Blue": "#2563eb", "Gray": "#475569",
+                "Green": "#15803d", "Red": "#b91c1c"
+            },
+            widgetHeaderColor: {
+                "Slate": "#e2e8f0", "White": "#ffffff",
+                "Cool gray": "#f1f5f9", "Soft blue": "#dbeafe"
+            },
+            widgetBorderColor: {
+                "Slate": "#64748b", "Gray": "#94a3b8",
+                "Blue": "#2563eb", "Green": "#15803d"
+            }
+        };
+    }
+
+    normalizeAppearanceColor(value, kind) {
+        const options = Object.values(this.getAppearancePalettes()[kind] || {});
+        return options.includes(value)
+            ? value
+            : this.appearanceSettings?.[kind] || this.createDefaultAppearanceSettings()[kind];
+    }
+
+    normalizeAppearanceSettings(value) {
+        const defaults = this.createDefaultAppearanceSettings();
+        return Object.fromEntries(
+            Object.keys(defaults).map(kind => [
+                kind,
+                Object.values(this.getAppearancePalettes()[kind]).includes(value?.[kind])
+                    ? value[kind]
+                    : defaults[kind]
+            ])
+        );
+    }
+
+    applyGlobalAppearance() {
+        if (!this.boardElement) return;
+        this.boardElement.style.setProperty("--workflow-connection-color", this.appearanceSettings.connectionColor);
+        this.boardElement.style.setProperty("--workflow-hover-color", this.appearanceSettings.hoverColor);
+    }
+
+    createAppearanceSelect(kind, value, inherit = false) {
+        const select = document.createElement("select");
+        select.className = "appearance-color-select";
+        if (inherit) {
+            const option = document.createElement("option");
+            option.value = "";
+            option.textContent = "Use global hover color";
+            select.appendChild(option);
+        }
+        for (const [label, color] of Object.entries(this.getAppearancePalettes()[kind])) {
+            const option = document.createElement("option");
+            option.value = color;
+            option.textContent = label;
+            select.appendChild(option);
+        }
+        select.value = value ?? "";
+        return select;
+    }
+
+    showGlobalAppearanceDialog() {
+        if (this.activeDialog || this.tutorialActive) return;
+        const previousFocus = document.activeElement;
+        const overlay = document.createElement("div");
+        overlay.className = "app-dialog-overlay appearance-overlay";
+        const dialog = document.createElement("section");
+        dialog.className = "app-dialog appearance-dialog visible";
+        dialog.setAttribute("role", "dialog");
+        dialog.setAttribute("aria-modal", "true");
+        const heading = document.createElement("h2");
+        heading.className = "app-dialog-title";
+        heading.id = "appearance-dialog-title";
+        heading.textContent = "Appearance defaults";
+        dialog.setAttribute("aria-labelledby", heading.id);
+        const description = document.createElement("p");
+        description.className = "panel-description";
+        description.textContent = "New widgets and lines use these colors. Apply to existing items only when you choose to.";
+        const fields = document.createElement("div");
+        fields.className = "appearance-fields";
+        const inputs = {};
+        const labels = {
+            connectionColor: "New connection color",
+            hoverColor: "Connection hover / Peek color",
+            widgetHeaderColor: "New widget header",
+            widgetBorderColor: "New widget border"
+        };
+        for (const kind of Object.keys(labels)) {
+            const label = document.createElement("label");
+            label.className = "appearance-field";
+            const text = document.createElement("span");
+            text.textContent = labels[kind];
+            const input = this.createAppearanceSelect(kind, this.appearanceSettings[kind]);
+            label.append(text, input);
+            fields.appendChild(label);
+            inputs[kind] = input;
+        }
+        const applyConnections = document.createElement("label");
+        applyConnections.className = "appearance-check";
+        const connectionCheckbox = document.createElement("input");
+        connectionCheckbox.type = "checkbox";
+        applyConnections.append(connectionCheckbox, document.createTextNode(" Apply colors to existing connections"));
+        const applyWidgets = document.createElement("label");
+        applyWidgets.className = "appearance-check";
+        const widgetCheckbox = document.createElement("input");
+        widgetCheckbox.type = "checkbox";
+        applyWidgets.append(widgetCheckbox, document.createTextNode(" Apply header/border to existing widgets"));
+        const actions = document.createElement("div");
+        actions.className = "app-dialog-actions";
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.className = "app-dialog-button app-dialog-button-secondary";
+        cancel.textContent = "Cancel";
+        const save = document.createElement("button");
+        save.type = "button";
+        save.className = "app-dialog-button app-dialog-button-primary";
+        save.textContent = "Save defaults";
+        actions.append(cancel, save);
+        dialog.append(heading, description, fields, applyConnections, applyWidgets, actions);
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+        const close = () => {
+            document.removeEventListener("keydown", onKey, true);
+            overlay.remove();
+            if (this.activeDialog?.overlay === overlay) this.activeDialog = null;
+            if (previousFocus?.isConnected) previousFocus.focus();
+        };
+        const onKey = event => {
+            if (event.key === "Escape") {
+                event.preventDefault(); event.stopPropagation(); close();
+            } else if (event.key === "Tab") {
+                const focusables = [...dialog.querySelectorAll("select, input, button")];
+                const index = focusables.indexOf(document.activeElement);
+                if (event.shiftKey && index === 0) {
+                    event.preventDefault(); focusables[focusables.length - 1].focus();
+                } else if (!event.shiftKey && index === focusables.length - 1) {
+                    event.preventDefault(); focusables[0].focus();
+                }
+            }
+        };
+        cancel.addEventListener("click", close);
+        save.addEventListener("click", () => {
+            const next = this.normalizeAppearanceSettings(
+                Object.fromEntries(Object.keys(inputs).map(kind => [kind, inputs[kind].value]))
+            );
+            const changed = Object.keys(next).some(kind => next[kind] !== this.appearanceSettings[kind]);
+            if (changed || connectionCheckbox.checked || widgetCheckbox.checked) {
+                this.recordHistoryState();
+                this.appearanceSettings = next;
+                this.applyGlobalAppearance();
+                if (connectionCheckbox.checked) {
+                    this.connections.forEach(connection => {
+                        connection.color = next.connectionColor;
+                        connection.hoverColor = null;
+                        connection.applyAppearance();
+                    });
+                }
+                if (widgetCheckbox.checked) {
+                    this.widgets.forEach(widget => {
+                        widget.headerColor = next.widgetHeaderColor;
+                        widget.borderColor = next.widgetBorderColor;
+                        widget.refreshContent();
+                    });
+                }
+                if (this.selectedConnection) this.showConnectionProperties(this.selectedConnection);
+                if (this.selectedWidget) this.showWidgetProperties(this.selectedWidget);
+                this.scheduleSave();
+            }
+            close();
+        });
+        document.addEventListener("keydown", onKey, true);
+        this.activeDialog = {overlay, close};
+        inputs.connectionColor.focus();
+    }
+
     render() {
         this.rootElement.innerHTML = "";
 
@@ -226,6 +417,7 @@ class Board {
         this.rootElement.appendChild(boardElement);
 
         this.boardElement = boardElement;
+        this.applyGlobalAppearance();
 
         this.updateWorkspaceTransform();
         this.updateStats();
@@ -786,6 +978,7 @@ class Board {
             ["basics", "Interface Basics"],
             ["canvas", "Canvas & Navigation"],
             ["widgets", "Widgets & Connections"],
+            ["appearance", "Appearance & Icons"],
             ["io", "Inputs & Outputs"],
             ["debug", "Data & Debugging"],
             ["research", "Research & Reproducibility"],
@@ -980,6 +1173,15 @@ class Board {
         menuBar.appendChild(historyControls);
         menuBar.appendChild(runControls);
         menuBar.appendChild(consoleButton);
+        const appearanceButton = document.createElement("button");
+        appearanceButton.type = "button";
+        appearanceButton.className = "history-icon-button appearance-toolbar-button";
+        appearanceButton.title = "Appearance defaults / apply to all";
+        appearanceButton.setAttribute("aria-label", "Appearance defaults and apply to all");
+        appearanceButton.dataset.tour = "appearance-button";
+        appearanceButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="7.5" cy="9" r="1"/><circle cx="12" cy="6.5" r="1"/><circle cx="16.5" cy="9" r="1"/><path d="M16 15c-1.2 0-1.8 1-1.8 2s-.7 1.5-1.5 1.5"/></svg>`;
+        appearanceButton.addEventListener("click", () => this.showGlobalAppearanceDialog());
+        menuBar.appendChild(appearanceButton);
         menuBar.appendChild(spacer);
         menuBar.appendChild(zoomDisplay);
 
@@ -4921,6 +5123,70 @@ class Board {
         positionRow.appendChild(positionText);
 
         general.body.appendChild(titleRow);
+        const appearanceRow = document.createElement("div");
+        appearanceRow.className = "property-row widget-appearance-fields";
+        appearanceRow.dataset.tour = "properties-appearance";
+        for (const [kind, key, title] of [
+            ["widgetHeaderColor", "headerColor", "Header color"],
+            ["widgetBorderColor", "borderColor", "Border color"]
+        ]) {
+            const label = document.createElement("label");
+            label.textContent = title;
+            const select = this.createAppearanceSelect(kind, widget[key]);
+            select.addEventListener("change", () => {
+                if (widget[key] === select.value) return;
+                this.recordHistoryState();
+                widget[key] = this.normalizeAppearanceColor(select.value, kind);
+                widget.refreshContent();
+                this.scheduleSave();
+            });
+            label.appendChild(select);
+            appearanceRow.appendChild(label);
+        }
+        const iconRow = document.createElement("div");
+        iconRow.className = "property-row widget-icon-field";
+        const iconLabel = document.createElement("label");
+        iconLabel.textContent = "Widget icon (PNG, JPEG, WebP · max 128 KB)";
+        const iconInput = document.createElement("input");
+        iconInput.type = "file";
+        iconInput.accept = "image/png,image/jpeg,image/webp";
+        const removeIcon = document.createElement("button");
+        removeIcon.type = "button";
+        removeIcon.className = "appearance-remove-icon";
+        removeIcon.textContent = "Remove icon";
+        removeIcon.disabled = !widget.iconData;
+        removeIcon.addEventListener("click", () => {
+            if (!widget.iconData) return;
+            this.recordHistoryState();
+            widget.iconData = null;
+            widget.refreshContent();
+            removeIcon.disabled = true;
+            iconInput.value = "";
+            this.scheduleSave();
+        });
+        iconInput.addEventListener("change", () => {
+            const file = iconInput.files?.[0];
+            if (!file) return;
+            if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 128 * 1024) {
+                iconInput.value = "";
+                this.showMessageDialog({title: "Icon not supported", message: "Choose a PNG, JPEG or WebP smaller than 128 KB.", tone: "warning"});
+                return;
+            }
+            const reader = new FileReader();
+            reader.addEventListener("load", () => {
+                if (!this.widgets.includes(widget)) return;
+                const value = reader.result;
+                if (typeof value !== "string" || !/^data:image\/(?:png|jpeg|webp);base64,[a-zA-Z0-9+/=]+$/.test(value) || value.length > 190000) return;
+                this.recordHistoryState();
+                widget.iconData = value;
+                widget.refreshContent();
+                removeIcon.disabled = false;
+                this.scheduleSave();
+            });
+            reader.readAsDataURL(file);
+        });
+        iconRow.append(iconLabel, iconInput, removeIcon);
+        general.body.append(appearanceRow, iconRow);
         // Keep the legacy role internally for existing workflows, but do not
         // expose it as an editable widget "type" in the simplified UI.
         general.body.appendChild(positionRow);
@@ -6851,6 +7117,35 @@ class Board {
             }
         );
 
+        const colorRow = document.createElement("div");
+        colorRow.className = "property-row";
+        const colorLabel = document.createElement("label");
+        colorLabel.textContent = "Connection color";
+        const colorSelect = this.createAppearanceSelect("connectionColor", connection.color);
+        colorSelect.addEventListener("change", () => {
+            if (connection.color === colorSelect.value) return;
+            this.recordHistoryState();
+            connection.color = this.normalizeAppearanceColor(colorSelect.value, "connectionColor");
+            connection.applyAppearance();
+            this.updateWorkflowMap();
+            this.scheduleSave();
+        });
+        colorRow.append(colorLabel, colorSelect);
+        section.body.appendChild(colorRow);
+        const hoverRow = document.createElement("div");
+        hoverRow.className = "property-row";
+        const hoverLabel = document.createElement("label");
+        hoverLabel.textContent = "Hover / Peek color";
+        const hoverSelect = this.createAppearanceSelect("hoverColor", connection.hoverColor, true);
+        hoverSelect.addEventListener("change", () => {
+            if ((connection.hoverColor || "") === hoverSelect.value) return;
+            this.recordHistoryState();
+            connection.hoverColor = hoverSelect.value || null;
+            connection.applyAppearance();
+            this.scheduleSave();
+        });
+        hoverRow.append(hoverLabel, hoverSelect);
+        section.body.appendChild(hoverRow);
         this.propertiesPanelContent.appendChild(
             section.section
         );
@@ -7454,6 +7749,7 @@ class Board {
                     path.classList.add(
                         "workflow-map-connection"
                     );
+                    path.style.setProperty("--mini-connection-custom", connection.color);
 
                     if (
                         this.selectedConnection ===
@@ -8259,6 +8555,8 @@ class Board {
         this.clearWorkflow({
             preserveResearch: true
         });
+        this.appearanceSettings = this.normalizeAppearanceSettings(workflowData.appearanceSettings);
+        this.applyGlobalAppearance();
 
         workflowData.widgets.forEach(
             (widgetData) => {
@@ -8337,12 +8635,19 @@ class Board {
                         sourceWidget !==
                             targetWidget
                     ) {
-                        this.addConnection(
+                        const connection = this.addConnection(
                             sourceWidget,
                             targetWidget,
                             connectionData.sourcePortId || null,
                             connectionData.targetPortId || null
                         );
+                        if (connection) {
+                            connection.color = this.normalizeAppearanceColor(connectionData.color, "connectionColor");
+                            connection.hoverColor = connectionData.hoverColor
+                                ? this.normalizeAppearanceColor(connectionData.hoverColor, "hoverColor")
+                                : null;
+                            connection.applyAppearance();
+                        }
                     }
                 }
             );
@@ -8570,6 +8875,7 @@ class Board {
             basics: "Interface Basics",
             canvas: "Canvas & Navigation",
             widgets: "Widgets & Connections",
+            appearance: "Appearance & Icons",
             io: "Inputs & Outputs",
             debug: "Data & Debugging",
             properties: "Properties Panel",
@@ -8614,6 +8920,25 @@ class Board {
         };
 
         const allSteps = [
+            {
+                sections: ["appearance"],
+                title: "Appearance defaults",
+                target: '[data-tour="appearance-button"]',
+                text: "Use the palette button to choose default widget and line colors. Check Apply to existing if you want to recolor the current canvas."
+            },
+            {
+                sections: ["appearance", "properties"],
+                title: "Widget icons and colors",
+                target: '[data-tour="properties-appearance"]',
+                prepare: showProps("properties-appearance"),
+                text: "Select a widget to choose its header and border color, or upload a small PNG, JPEG, or WebP icon."
+            },
+            {
+                sections: ["appearance", "widgets"],
+                title: "Line appearance",
+                target: '[data-tour="workspace"]',
+                text: "Select a connection to change its color or hover color in Properties. Lines stay gray unless you change them."
+            },
             {
                 sections: ["basics"],
                 title: "Welcome",
@@ -11843,7 +12168,8 @@ class Board {
                 workflowGroups:
                     this.cloneResearchValue(
                         this.workflowGroups
-                    )
+                    ),
+                appearanceSettings: { ...this.appearanceSettings }
             }
         );
     }
@@ -12107,7 +12433,8 @@ class Board {
 
     getWorkflowData() {
         return {
-            version: 4,
+            version: 5,
+            appearanceSettings: { ...this.appearanceSettings },
 
             workflowMetadata:
                 this.cloneResearchValue(

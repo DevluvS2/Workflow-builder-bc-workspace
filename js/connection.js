@@ -37,8 +37,19 @@ class Connection {
 
         this.hitElement = null;
         this.groupElement = null;
+        this.color = board.appearanceSettings?.connectionColor || "#64748b";
+        this.hoverColor = null; // null means inherit global hover preference.
     }
 
+    applyAppearance() {
+        if (!this.element) return;
+        this.element.style.setProperty("--connection-custom", this.color);
+        if (this.hoverColor) {
+            this.element.style.setProperty("--connection-hover-custom", this.hoverColor);
+        } else {
+            this.element.style.removeProperty("--connection-hover-custom");
+        }
+    }
 
     render() {
         const svgNamespace =
@@ -153,7 +164,7 @@ class Connection {
         this.element = path;
         this.hitElement = hitPath;
         this.groupElement = group;
-
+        this.applyAppearance();
 
         this.update();
 
@@ -632,7 +643,9 @@ class Connection {
                 this.targetWidget.id,
 
             targetPortId:
-                this.targetPortId
+                this.targetPortId,
+            color: this.color,
+            hoverColor: this.hoverColor
         };
     }
 }
