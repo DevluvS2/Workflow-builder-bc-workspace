@@ -4079,3 +4079,39 @@ body {
 }
 .workflow-map-connection.selected { stroke: #2563eb; }
 .workflow-map-connection.branch-inactive { stroke: #94a3b8; }
+
+/* Professor feedback Batch 3: reusable templates and low-contrast group colors. */
+.template-library-header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin: 16px 0 8px; padding-top: 10px;
+    border-top: 1px solid var(--ui-border-soft, #cbd5e1);
+    color: var(--ui-text, #1f2937); font-size: 12px;
+}
+.template-library-count, .template-library-hint, .template-library-empty {
+    color: var(--ui-muted, #64748b); font-size: 11px;
+}
+.template-library-hint { line-height: 1.45; margin: 9px 0; }
+.template-library-empty { margin: 3px 0 9px; }
+.template-library-list { display: grid; gap: 5px; }
+.template-library-row { display: grid; grid-template-columns: minmax(0, 1fr) 28px; gap: 5px; align-items: start; }
+.template-library-row .template-use-button { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.template-remove-button { border: 1px solid var(--ui-border, #cbd5e1); border-radius: 5px;
+    color: var(--ui-text-soft, #475569); background: var(--ui-surface, white); min-height: 34px;
+    font-size: 17px; line-height: 1; }
+.template-remove-button:hover, .template-remove-button:focus-visible { color: #991b1b; border-color: #b91c1c; background: #fff7f7; }
+.workflow-group { border-color: var(--group-color, #64748b); background: color-mix(in srgb, var(--group-color, #64748b) 5%, transparent); }
+.workflow-group-header { border-color: color-mix(in srgb, var(--group-color, #64748b) 50%, white);
+    color: var(--group-color, #475569); }
+.section-dialog { grid-template-rows: none; display: flex; flex-direction: column; }
+.section-dialog .section-widget-list { flex: 1; min-height: 100px; }
+.section-dialog .group-color-select { margin: 0 14px 7px; width: calc(100% - 28px);
+    min-height: 34px; padding: 5px 9px; border: 1px solid var(--ui-border, #cbd5e1);
+    border-radius: 6px; background: var(--ui-surface, white); color: var(--ui-text, #1f2937); }
+.template-export-dialog { width: min(440px, calc(100vw - 32px)); padding: 18px; }
+.template-export-dialog > p { color: var(--ui-muted, #64748b); font-size: 13px; line-height: 1.4; }
+.template-transfer-option { display: grid; grid-template-columns: auto 1fr; gap: 5px 9px;
+    padding: 12px; margin: 10px 0 16px; border: 1px solid var(--ui-border-soft, #cbd5e1);
+    border-radius: 7px; color: var(--ui-text, #1f2937); cursor: pointer; font-size: 13px; }
+.template-transfer-option input { margin: 1px 0 0; }
+.template-transfer-option small { grid-column: 2; color: var(--ui-muted, #64748b); font-size: 11px; }
+.template-transfer-option:has(input:disabled) { opacity: .6; cursor: default; }

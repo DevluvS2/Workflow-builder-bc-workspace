@@ -10,6 +10,8 @@ class Board {
 
         // Global defaults are saved with the workflow; individual items can override them.
         this.appearanceSettings = this.createDefaultAppearanceSettings();
+        this.templateStorageKey = "workflowBuilderUserTemplatesV1";
+        this.userTemplates = this.loadTemplateLibrary();
 
         this.hoverPeekWidget = null;
         this.pinnedPeekWidget = null;
@@ -37,7 +39,7 @@ class Board {
 
         /* Guided interface tutorial. */
         this.tutorialStorageKey =
-            "workflowBuilderInterfaceTutorialSeenProfessorBatch2V1";
+            "workflowBuilderInterfaceTutorialSeenProfessorBatch3V1";
         this.tutorialActive = false;
         this.tutorialStepIndex = 0;
         this.tutorialSteps = [];
@@ -462,6 +464,19 @@ class Board {
         fileDropdown.appendChild(newMenuItem);
         fileDropdown.appendChild(exportMenuItem);
         fileDropdown.appendChild(importMenuItem);
+        const templateDivider = document.createElement("div");
+        templateDivider.className = "dropdown-divider";
+        fileDropdown.appendChild(templateDivider);
+        const importTemplatesItem = document.createElement("button");
+        importTemplatesItem.type = "button";
+        importTemplatesItem.textContent = "Import Widget Templates…";
+        const exportTemplatesItem = document.createElement("button");
+        exportTemplatesItem.type = "button";
+        exportTemplatesItem.textContent = "Export Widget Templates";
+        importTemplatesItem.addEventListener("click", () => this.templateImportInput?.click());
+        exportTemplatesItem.addEventListener("click", () => this.exportTemplates());
+        fileDropdown.appendChild(importTemplatesItem);
+        fileDropdown.appendChild(exportTemplatesItem);
         fileMenu.appendChild(fileButton);
         fileMenu.appendChild(fileDropdown);
 
@@ -485,6 +500,17 @@ class Board {
         });
 
         fileMenu.appendChild(importInput);
+        const templateImportInput = document.createElement("input");
+        templateImportInput.type = "file";
+        templateImportInput.accept = ".json,application/json";
+        templateImportInput.hidden = true;
+        templateImportInput.addEventListener("change", async (event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (file) await this.importTemplates(file);
+        });
+        fileMenu.appendChild(templateImportInput);
+        this.templateImportInput = templateImportInput;
 
 
         /* =============================
@@ -936,7 +962,7 @@ class Board {
 
         const createSectionItem = document.createElement("button");
         createSectionItem.type = "button";
-        createSectionItem.textContent = "Create Section…";
+        createSectionItem.textContent = "Create Group…";
         createSectionItem.addEventListener("click", () => {
             this.openSectionDialog();
         });
@@ -979,6 +1005,7 @@ class Board {
             ["canvas", "Canvas & Navigation"],
             ["widgets", "Widgets & Connections"],
             ["appearance", "Appearance & Icons"],
+            ["templates", "Templates & Groups"],
             ["io", "Inputs & Outputs"],
             ["debug", "Data & Debugging"],
             ["research", "Research & Reproducibility"],
@@ -1276,29 +1303,331 @@ class Board {
     buildWidgetLibrary(panelContent) {
         const description = document.createElement("p");
         description.className = "panel-description";
-        description.textContent =
-            "Add workflow widgets to the board.";
-
-        const widgetTypes = [
-            "Start",
-            "Process",
-            "Decision",
-            "End"
-        ];
-
+        description.textContent = "Choose a widget or a saved template.";
         panelContent.appendChild(description);
 
-        widgetTypes.forEach((type) => {
+        const builtin = document.createElement("div");
+        builtin.className = "widget-library-list";
+        builtin.dataset.tour = "widget-library-builtins";
+        ["Start", "Process", "Decision", "End"].forEach((type) => {
             const button = document.createElement("button");
+            button.type = "button";
             button.className = "widget-library-button";
             button.textContent = type;
             button.title = `Create ${type} widget`;
+            button.addEventListener("click", () => this.createWidget(type));
+            builtin.appendChild(button);
+        });
+        panelContent.appendChild(builtin);
 
-            button.addEventListener("click", () => {
-                this.createWidget(type);
-            });
+        const header = document.createElement("div");
+        header.className = "template-library-header";
+        const title = document.createElement("strong");
+        title.textContent = "My Templates";
+        const count = document.createElement("span");
+        count.className = "template-library-count";
+        header.appendChild(title);
+        header.appendChild(count);
+        panelContent.appendChild(header);
 
-            panelContent.appendChild(button);
+        const list = document.createElement("div");
+        list.className = "template-library-list";
+        list.dataset.tour = "template-library";
+        panelContent.appendChild(list);
+        const hint = document.createElement("p");
+        hint.className = "template-library-hint";
+        hint.textContent = "Right-click a widget → Save as Template to add one here.";
+        panelContent.appendChild(hint);
+        this.templateLibraryList = list;
+        this.templateLibraryCount = count;
+        this.refreshTemplateLibrary();
+    }
+
+    makeTemplateId() {
+        return `tpl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+
+    // Templates intentionally contain no node identity, position, edges, or run results.
+    makeTemplateWidgetData(widget) {
+        const data = JSON.parse(JSON.stringify(widget.toJSON()));
+        delete data.id;
+        delete data.x;
+        delete data.y;
+        delete data.zIndex;
+        data.status = widget.type === "Start" ? "idle" : "waiting";
+        data.lastRunSignature = null;
+        data.runtimeMs = 0;
+        data.memoryKb = 0;
+        data.lastError = "";
+        data.lastDecisionResult = null;
+        (data.inputs || []).forEach((port) => {
+            port.value = port.manualValue ?? "";
+            port.pinned = false;
+        });
+        (data.outputs || []).forEach((port) => {
+            if (widget.type !== "Start") port.value = "";
+            port.pinned = false;
+        });
+        return data;
+    }
+
+    normalizeTemplate(raw) {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw) ||
+            typeof raw.name !== "string" || !raw.name.trim() || raw.name.length > 80 ||
+            !raw.widget || typeof raw.widget !== "object" || Array.isArray(raw.widget)) {
+            throw new Error("A template must have a name and widget configuration.");
+        }
+        const config = raw.widget;
+        if (!["Start", "Process", "Decision", "End"].includes(config.type) ||
+            !Array.isArray(config.inputs) || !Array.isArray(config.outputs) ||
+            config.inputs.length > 32 || config.outputs.length > 32 ||
+            typeof config.source !== "string" || config.source.length > 30000 ||
+            JSON.stringify(raw).length > 240000) {
+            throw new Error(`Template "${raw.name}" contains invalid or oversized configuration.`);
+        }
+        const allIds = [...config.inputs, ...config.outputs].map((port) => port?.id);
+        if (allIds.some((id) => typeof id !== "string" || id.length > 80) ||
+            new Set(allIds).size !== allIds.length) {
+            throw new Error(`Template "${raw.name}" has invalid port identifiers.`);
+        }
+        const widget = new Widget(this, "template-validation", raw.name.trim(), config.type, 0, 0);
+        widget.applyJSON(config);
+        const clean = this.makeTemplateWidgetData(widget);
+        return {
+            id: /^tpl-[a-z0-9-]{5,60}$/i.test(raw.id) ? raw.id : this.makeTemplateId(),
+            name: raw.name.trim(),
+            widget: clean
+        };
+    }
+
+    loadTemplateLibrary() {
+        try {
+            const raw = localStorage.getItem(this.templateStorageKey);
+            if (!raw) return [];
+            const data = JSON.parse(raw);
+            if (!Array.isArray(data)) return [];
+            return data.slice(0, 30).map((template) => this.normalizeTemplate(template));
+        } catch (error) {
+            console.warn("Template library could not be loaded:", error);
+            return [];
+        }
+    }
+
+    saveTemplateLibrary(templates) {
+        if (templates.length > 30 || JSON.stringify(templates).length > 1500000) {
+            throw new Error("Template library limit reached (30 templates or 1.5 MB). Export or remove some templates first.");
+        }
+        // Persist first. Keep the previous in-memory library if storage fails.
+        localStorage.setItem(this.templateStorageKey, JSON.stringify(templates));
+        this.userTemplates = templates;
+        this.refreshTemplateLibrary();
+    }
+
+    refreshTemplateLibrary() {
+        if (!this.templateLibraryList) return;
+        this.templateLibraryList.replaceChildren();
+        if (this.templateLibraryCount) this.templateLibraryCount.textContent = `${this.userTemplates.length}/30`;
+        if (this.userTemplates.length === 0) {
+            const empty = document.createElement("p");
+            empty.className = "template-library-empty";
+            empty.textContent = "No saved templates yet.";
+            this.templateLibraryList.appendChild(empty);
+            return;
+        }
+        this.userTemplates.forEach((template) => {
+            const row = document.createElement("div");
+            row.className = "template-library-row";
+            const add = document.createElement("button");
+            add.type = "button";
+            add.className = "widget-library-button template-use-button";
+            add.textContent = template.name;
+            add.title = `Create a widget from ${template.name}`;
+            add.addEventListener("click", () => this.createWidgetFromTemplate(template.id));
+            const remove = document.createElement("button");
+            remove.type = "button";
+            remove.className = "template-remove-button";
+            remove.textContent = "×";
+            remove.title = `Delete your template ${template.name}`;
+            remove.setAttribute("aria-label", `Delete template ${template.name}`);
+            remove.addEventListener("click", () => this.deleteTemplate(template.id));
+            row.append(add, remove);
+            this.templateLibraryList.appendChild(row);
+        });
+    }
+
+    async saveWidgetAsTemplate(widget) {
+        if (!widget || !this.widgets.includes(widget)) return;
+        if (this.userTemplates.length >= 30) {
+            await this.showMessageDialog({title: "Template Library Full", message: "Export or remove some templates first (maximum 30).", tone: "warning"});
+            return;
+        }
+        const name = await this.showPromptDialog({
+            title: "Save Widget as Template",
+            message: "Choose a name for this reusable widget configuration. Connections and run results will not be saved.",
+            value: widget.title,
+            confirmLabel: "Save Template"
+        });
+        if (name === null) return;
+        const cleanName = String(name).trim();
+        if (!cleanName || cleanName.length > 80) {
+            await this.showMessageDialog({title: "Invalid Template Name", message: "Use a name between 1 and 80 characters.", tone: "warning"});
+            return;
+        }
+        const template = this.normalizeTemplate({
+            id: this.makeTemplateId(), name: cleanName,
+            widget: this.makeTemplateWidgetData(widget)
+        });
+        try {
+            this.saveTemplateLibrary([...this.userTemplates, template]);
+        } catch (error) {
+            await this.showMessageDialog({title: "Template Not Saved", message: error.message || "Browser storage is full.", tone: "error"});
+        }
+    }
+
+    createWidgetFromTemplate(id) {
+        if (this.isWorkflowRunning) return null;
+        const template = this.userTemplates.find((item) => item.id === id);
+        if (!template) return null;
+        this.recordHistoryState();
+        const rect = this.workspaceContainer.getBoundingClientRect();
+        const center = this.screenToWorkspace(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        const widget = new Widget(
+            this, `widget-${this.nextWidgetNumber++}`, template.name, template.widget.type,
+            Math.max(0, Math.min(this.workspaceWidth - 220, center.x - 105)),
+            Math.max(0, Math.min(this.workspaceHeight - 160, center.y - 60))
+        );
+        widget.applyJSON(JSON.parse(JSON.stringify(template.widget)));
+        widget.zIndex = null;
+        this.addWidget(widget);
+        this.selectWidget(widget);
+        return widget;
+    }
+
+    async deleteTemplate(id) {
+        const template = this.userTemplates.find((item) => item.id === id);
+        if (!template) return;
+        const confirmed = await this.showConfirmDialog({
+            title: "Delete Template?", message: `Remove your saved template "${template.name}"? Existing widgets are unaffected.`,
+            confirmLabel: "Delete Template", danger: true
+        });
+        if (!confirmed) return;
+        try {
+            this.saveTemplateLibrary(this.userTemplates.filter((item) => item.id !== id));
+        } catch (error) {
+            await this.showMessageDialog({title: "Template Not Deleted", message: error.message || "Could not update library.", tone: "error"});
+        }
+    }
+
+    downloadJSONFile(data, filename) {
+        const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type: "application/json"}));
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    async exportTemplates() {
+        if (!this.userTemplates.length) {
+            await this.showMessageDialog({title: "No Saved Templates", message: "Right-click a widget and choose Save as Template first."});
+            return;
+        }
+        this.downloadJSONFile({format: "workflow-widget-templates", version: 1, templates: this.userTemplates}, "widget-templates.json");
+    }
+
+    mergeImportedTemplates(rawTemplates) {
+        if (!Array.isArray(rawTemplates) || rawTemplates.length > 30) {
+            throw new Error("The file must contain an array of no more than 30 templates.");
+        }
+        const sanitized = rawTemplates.map((item) => this.normalizeTemplate(item));
+        const next = [...this.userTemplates];
+        let added = 0;
+        for (const template of sanitized) {
+            if (next.some((existing) => existing.id === template.id)) continue;
+            next.push(template);
+            added += 1;
+        }
+        if (added) this.saveTemplateLibrary(next);
+        return added;
+    }
+
+    async importTemplates(file) {
+        try {
+            if (file.size > 2000000) throw new Error("Template file is too large (2 MB maximum).");
+            const data = JSON.parse(await file.text());
+            if (data.format !== "workflow-widget-templates" || data.version !== 1) {
+                throw new Error("Choose a widget-templates.json file, not a full workflow export.");
+            }
+            const count = this.mergeImportedTemplates(data.templates);
+            await this.showMessageDialog({title: "Templates Imported", message: count ? `Added ${count} template${count === 1 ? "" : "s"}. Existing templates were preserved.` : "All templates are already in your library.", tone: "success"});
+        } catch (error) {
+            await this.showMessageDialog({title: "Template Import Failed", message: error.message || "Invalid template file.", tone: "error"});
+        }
+    }
+
+    // One compact checkbox dialog for optional library transfer with workflow files.
+    showWorkflowTemplateOptionDialog({ mode = "export", hasTemplates = false } = {}) {
+        if (this.activeDialog) this.activeDialog.close(null);
+        return new Promise((resolve) => {
+            const overlay = document.createElement("div");
+            overlay.className = "app-dialog-overlay";
+            const dialog = document.createElement("section");
+            dialog.className = "app-dialog template-export-dialog visible";
+            dialog.setAttribute("role", "dialog");
+            dialog.setAttribute("aria-modal", "true");
+            dialog.setAttribute("aria-label", mode === "import" ? "Import workflow options" : "Export workflow options");
+            const heading = document.createElement("h2");
+            heading.className = "app-dialog-title";
+            heading.textContent = mode === "import" ? "Import Workflow" : "Export Workflow";
+            const text = document.createElement("p");
+            text.textContent = mode === "import" ? "Import the workflow. Include its saved widget library only if you want to add those templates to yours." : "Export the current workflow. Optionally include your user-created widget templates.";
+            const label = document.createElement("label");
+            label.className = "template-transfer-option";
+            const checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            checkbox.checked = false;
+            checkbox.disabled = !hasTemplates;
+            const caption = document.createElement("span");
+            caption.textContent = mode === "import" ? "Also import widget library" : "Include widget library in export";
+            const secondary = document.createElement("small");
+            secondary.textContent = hasTemplates
+                ? (mode === "import" ? "Your current library is kept; new templates are merged by ID." : "Your saved templates will be included in this workflow file.")
+                : "No templates available in this file/library.";
+            label.append(checkbox, caption, secondary);
+            const actions = document.createElement("div");
+            actions.className = "app-dialog-actions";
+            const cancel = document.createElement("button");
+            cancel.type = "button";
+            cancel.className = "app-dialog-button app-dialog-button-secondary";
+            cancel.textContent = "Cancel";
+            const confirm = document.createElement("button");
+            confirm.type = "button";
+            confirm.className = "app-dialog-button app-dialog-button-primary";
+            confirm.textContent = mode === "import" ? "Import Workflow" : "Export Workflow";
+            let finished = false;
+            const close = (result) => {
+                if (finished) return;
+                finished = true;
+                document.removeEventListener("keydown", keyHandler, true);
+                overlay.remove();
+                if (this.activeDialog?.overlay === overlay) this.activeDialog = null;
+                resolve(result);
+            };
+            const keyHandler = (event) => {
+                if (event.key === "Escape") {event.preventDefault(); event.stopPropagation(); close(null);}
+                if (event.key === "Enter") {event.preventDefault(); event.stopPropagation(); close(checkbox.checked);}
+            };
+            cancel.addEventListener("click", () => close(null));
+            confirm.addEventListener("click", () => close(checkbox.checked));
+            actions.append(cancel, confirm);
+            dialog.append(heading, text, label, actions);
+            overlay.appendChild(dialog);
+            document.body.appendChild(overlay);
+            this.activeDialog = {overlay, close};
+            document.addEventListener("keydown", keyHandler, true);
+            requestAnimationFrame(() => confirm.focus());
         });
     }
 
@@ -8485,66 +8814,44 @@ class Board {
 
     importWorkflow(file) {
         const reader = new FileReader();
-
-        reader.addEventListener(
-            "load",
-            async () => {
-                try {
-                    const workflowData =
-                        JSON.parse(
-                            reader.result
-                        );
-
-                    if (
-                        !workflowData ||
-                        !Array.isArray(
-                            workflowData.widgets
-                        )
-                    ) {
-                        throw new Error(
-                            "Invalid workflow file"
-                        );
-                    }
-
-                    /*
-                    * Only warn if there is currently
-                    * something that could be lost.
-                    */
-                    if (
-                        this.widgets.length > 0
-                    ) {
-                        const confirmed =
-                            await this.showConfirmDialog({
-                                title: "Replace Current Workflow?",
-                                message:
-                                    "Importing this workflow will replace your current workflow.",
-                                confirmLabel: "Import & Replace",
-                                danger: true
-                            });
-
-                        if (!confirmed) {
-                            return;
-                        }
-                    }
-
-                    this.recordHistoryState();
-
-                    this.applyWorkflowData(
-                        workflowData
-                    );
-                } catch (error) {
-                    console.error(error);
-
-                    await this.showMessageDialog({
-                        title: "Import Failed",
-                        message:
-                            "This is not a valid workflow JSON file.",
-                        tone: "error"
-                    });
+        reader.addEventListener("load", async () => {
+            try {
+                if (file.size > 12000000) throw new Error("Workflow file exceeds 12 MB.");
+                const data = JSON.parse(reader.result);
+                if (!data || !Array.isArray(data.widgets) || data.widgets.length > 1500 ||
+                    (data.connections !== undefined && !Array.isArray(data.connections))) {
+                    throw new Error("This file does not contain a valid workflow.");
                 }
+                const hasTemplates = Array.isArray(data.widgetTemplates) && data.widgetTemplates.length > 0;
+                const includeTemplates = await this.showWorkflowTemplateOptionDialog({mode: "import", hasTemplates});
+                if (includeTemplates === null) return;
+                if (this.widgets.length > 0) {
+                    const confirmed = await this.showConfirmDialog({
+                        title: "Replace Current Workflow?",
+                        message: "The current workflow will be replaced. Your existing template library is kept.",
+                        confirmLabel: "Import & Replace", danger: true
+                    });
+                    if (!confirmed) return;
+                }
+                // Validate template bundle and space before mutating the canvas.
+                if (includeTemplates) {
+                    if (data.widgetTemplates.length > 30) throw new Error("Too many templates in workflow file.");
+                    const incoming = data.widgetTemplates.map((item) => this.normalizeTemplate(item));
+                    const additions = incoming.filter((item) => !this.userTemplates.some((old) => old.id === item.id));
+                    const proposed = [...this.userTemplates, ...additions];
+                    if (proposed.length > 30 || JSON.stringify(proposed).length > 1500000) {
+                        throw new Error("Template library has insufficient space. Import the workflow without its library, or remove templates first.");
+                    }
+                }
+                this.recordHistoryState();
+                this.applyWorkflowData(data);
+                if (includeTemplates) this.mergeImportedTemplates(data.widgetTemplates);
+            } catch (error) {
+                console.error("Workflow import failed:", error);
+                await this.showMessageDialog({title: "Import Failed", message: error.message || "This is not a valid workflow JSON file.", tone: "error"});
             }
-        );
-
+        });
+        reader.addEventListener("error", () => this.showMessageDialog({title: "Import Failed", message: "Could not read the file.", tone: "error"}));
         reader.readAsText(file);
     }
 
@@ -8667,8 +8974,9 @@ class Board {
                         title:
                             String(
                                 group.title ||
-                                `Section ${index + 1}`
+                                `Group ${index + 1}`
                             ),
+                        color: this.normalizeGroupColor(group.color),
                         widgetIds:
                             Array.isArray(group.widgetIds)
                                 ? group.widgetIds
@@ -8876,6 +9184,8 @@ class Board {
             canvas: "Canvas & Navigation",
             widgets: "Widgets & Connections",
             appearance: "Appearance & Icons",
+            templates: "Templates & Groups",
+            organization: "Organization & Navigation",
             io: "Inputs & Outputs",
             debug: "Data & Debugging",
             properties: "Properties Panel",
@@ -8920,6 +9230,32 @@ class Board {
         };
 
         const allSteps = [
+            {
+                sections: ["templates", "widgets"],
+                title: "Save your own widget",
+                target: '[data-tour="workspace"]',
+                text: "Configure a widget, right-click it, and choose Save as Template. It saves settings, not connections or run results."
+            },
+            {
+                sections: ["templates"],
+                title: "Reuse templates",
+                target: '[data-tour="template-library"]',
+                text: "Your saved templates appear in the Widget Library. Click one to add it; use × to remove only your own templates."
+            },
+            {
+                sections: ["templates"],
+                title: "Import and export templates",
+                target: '[data-tour="file-menu"]',
+                prepare: openMenu("file-menu"),
+                text: "File imports or exports templates separately. Regular workflow import/export also offers an Include Widget Library checkbox."
+            },
+            {
+                sections: ["templates", "organization"],
+                title: "Colored groups",
+                target: '[data-tour="organize-menu"]',
+                prepare: openMenu("organize-menu"),
+                text: "Organize → Create Group collects related widgets. Choose a subtle group color; groups do not affect execution."
+            },
             {
                 sections: ["appearance"],
                 title: "Appearance defaults",
@@ -8999,7 +9335,7 @@ class Board {
                 title: "Organize large workflows",
                 target: '[data-tour="organize-menu"]',
                 prepare: openMenu("organize-menu"),
-                text: "Use Organize when the canvas gets crowded: search, auto-layout, focus, and sections all live here."
+                text: "Use Organize when the canvas gets crowded: search, auto-layout, focus, and groups are all here."
             },
             {
                 sections: ["organization", "canvas"],
@@ -9022,10 +9358,10 @@ class Board {
             },
             {
                 sections: ["organization"],
-                title: "Sections",
+                title: "Groups",
                 target: '[data-tour="organize-menu"]',
                 prepare: openMenu("organize-menu"),
-                text: "Sections label related workflow stages without changing execution. Right-click a section title to edit, duplicate, or remove it."
+                text: "Groups outline related widgets. Choose a color, then right-click the group title to edit, duplicate, or remove it."
             },
             {
                 sections: ["basics", "shortcuts"],
@@ -12492,53 +12828,14 @@ class Board {
         };
     }
 
-    exportWorkflow() {
-        const workflowData =
-            this.getWorkflowData();
-
-        const jsonText =
-            JSON.stringify(
-                workflowData,
-                null,
-                2
-            );
-
-        const fileBlob =
-            new Blob(
-                [jsonText],
-                {
-                    type: "application/json"
-                }
-            );
-
-        const downloadUrl =
-            URL.createObjectURL(
-                fileBlob
-            );
-
-        const downloadLink =
-            document.createElement("a");
-
-        downloadLink.href =
-            downloadUrl;
-
-        const exportBaseName =
-            this.getResearchExportBaseName();
-
-        downloadLink.download =
-            `${exportBaseName}.json`;
-
-        document.body.appendChild(
-            downloadLink
-        );
-
-        downloadLink.click();
-
-        downloadLink.remove();
-
-        URL.revokeObjectURL(
-            downloadUrl
-        );
+    async exportWorkflow() {
+        const includeTemplates = await this.showWorkflowTemplateOptionDialog({
+            mode: "export", hasTemplates: this.userTemplates.length > 0
+        });
+        if (includeTemplates === null) return;
+        const data = this.getWorkflowData();
+        if (includeTemplates) data.widgetTemplates = this.cloneResearchValue(this.userTemplates);
+        this.downloadJSONFile(data, `${this.getResearchExportBaseName()}.json`);
     }
 
     createDefaultWorkflowMetadata() {
@@ -14510,7 +14807,7 @@ class Board {
                 action: () => this.fitWorkflowInView()
             },
             {
-                label: "Create Section",
+                label: "Create Group",
                 description: "Group related widgets under a label",
                 keywords: "group section stage organize",
                 icon: "section",
@@ -14885,6 +15182,22 @@ class Board {
         this.renderWorkflowGroups();
     }
 
+    getGroupPalette() {
+        return [
+            { value: "#64748b", label: "Slate" },
+            { value: "#2563eb", label: "Blue" },
+            { value: "#15803d", label: "Green" },
+            { value: "#a16207", label: "Amber" },
+            { value: "#7c3aed", label: "Violet" },
+            { value: "#b91c1c", label: "Red" }
+        ];
+    }
+
+    normalizeGroupColor(value) {
+        return this.getGroupPalette().some((item) => item.value === value)
+            ? value : "#64748b";
+    }
+
     closeSectionDialog() {
         if (this.activeSectionDialog) {
             this.activeSectionDialog.remove();
@@ -14897,7 +15210,7 @@ class Board {
             void this.showMessageDialog({
                 title: "No Widgets to Group",
                 message:
-                    "Add some widgets before creating a section."
+                    "Add widgets before creating a group."
             });
             return;
         }
@@ -14913,30 +15226,44 @@ class Board {
         panel.setAttribute("aria-modal", "true");
         panel.setAttribute(
             "aria-label",
-            existingGroup ? "Edit section" : "Create section"
+            existingGroup ? "Edit group" : "Create group"
         );
 
         const heading = document.createElement("h2");
         heading.textContent =
-            existingGroup ? "Edit Section" : "Create Section";
+            existingGroup ? "Edit Group" : "Create Group";
 
         const description = document.createElement("p");
         description.textContent =
-            "Use sections to label related stages without changing how the workflow executes.";
+            "Group related widgets without changing their behavior.";
 
         const titleLabel = document.createElement("label");
         titleLabel.className = "section-dialog-label";
-        titleLabel.textContent = "Section name";
+        titleLabel.textContent = "Group name";
 
         const titleInput = document.createElement("input");
         titleInput.type = "text";
         titleInput.value =
             existingGroup?.title ||
-            `Section ${this.nextGroupNumber}`;
+            `Group ${this.nextGroupNumber}`;
+
+        const colorLabel = document.createElement("label");
+        colorLabel.className = "section-dialog-label";
+        colorLabel.textContent = "Group color";
+        const colorSelect = document.createElement("select");
+        colorSelect.className = "group-color-select";
+        colorSelect.setAttribute("aria-label", "Group color");
+        this.getGroupPalette().forEach(({value, label}) => {
+            const option = document.createElement("option");
+            option.value = value;
+            option.textContent = label;
+            colorSelect.appendChild(option);
+        });
+        colorSelect.value = this.normalizeGroupColor(existingGroup?.color);
 
         const widgetLabel = document.createElement("div");
         widgetLabel.className = "section-dialog-label";
-        widgetLabel.textContent = "Widgets in this section";
+        widgetLabel.textContent = "Widgets in this group";
 
         const searchInput = document.createElement("input");
         searchInput.type = "search";
@@ -15006,7 +15333,7 @@ class Board {
         saveButton.type = "button";
         saveButton.className = "primary";
         saveButton.textContent =
-            existingGroup ? "Save Section" : "Create Section";
+            existingGroup ? "Save Group" : "Create Group";
 
         cancelButton.addEventListener("click", () => {
             this.closeSectionDialog();
@@ -15024,7 +15351,7 @@ class Board {
                 void this.showMessageDialog({
                     title: "Choose at Least One Widget",
                     message:
-                        "A section needs at least one widget."
+                        "A group needs at least one widget."
                 });
                 return;
             }
@@ -15034,10 +15361,12 @@ class Board {
             if (existingGroup) {
                 existingGroup.title = title;
                 existingGroup.widgetIds = [...selectedIds];
+                existingGroup.color = this.normalizeGroupColor(colorSelect.value);
             } else {
                 this.workflowGroups.push({
                     id: `group-${this.nextGroupNumber}`,
                     title,
+                    color: this.normalizeGroupColor(colorSelect.value),
                     widgetIds: [...selectedIds]
                 });
                 this.nextGroupNumber += 1;
@@ -15057,6 +15386,8 @@ class Board {
         panel.appendChild(description);
         panel.appendChild(titleLabel);
         panel.appendChild(titleInput);
+        panel.appendChild(colorLabel);
+        panel.appendChild(colorSelect);
         panel.appendChild(widgetLabel);
         panel.appendChild(searchInput);
         panel.appendChild(list);
@@ -15162,6 +15493,7 @@ class Board {
             const element = document.createElement("div");
             element.className = "workflow-group";
             element.dataset.groupId = group.id;
+            element.style.setProperty("--group-color", this.normalizeGroupColor(group.color));
             element.style.left = `${bounds.left}px`;
             element.style.top = `${bounds.top}px`;
             element.style.width = `${bounds.width}px`;
@@ -15250,7 +15582,7 @@ class Board {
         }
 
         const name = await this.showPromptDialog({
-            title: "Rename Section",
+            title: "Rename Group",
             message: "Choose a short label for this workflow stage.",
             value: group.title,
             confirmLabel: "Rename"
@@ -15358,6 +15690,7 @@ class Board {
         const duplicateGroup = {
             id: `group-${this.nextGroupNumber}`,
             title: `${group.title} Copy`,
+            color: this.normalizeGroupColor(group.color),
             widgetIds: duplicateIds
         };
 
@@ -15384,7 +15717,7 @@ class Board {
 
         menu.appendChild(
             this.createContextMenuButton(
-                "Edit Section",
+                "Edit Group",
                 () => this.openSectionDialog(group)
             )
         );
@@ -15398,7 +15731,7 @@ class Board {
 
         menu.appendChild(
             this.createContextMenuButton(
-                "Duplicate Section",
+                "Duplicate Group",
                 () => this.duplicateWorkflowGroup(group)
             )
         );
@@ -15409,7 +15742,7 @@ class Board {
 
         menu.appendChild(
             this.createContextMenuButton(
-                "Remove Section",
+                "Remove Group",
                 () => this.removeWorkflowGroup(group),
                 { danger: true }
             )
@@ -15790,6 +16123,13 @@ class Board {
 
         menu.appendChild(
             this.createContextMenuButton(
+                "Save as Template…",
+                () => this.saveWidgetAsTemplate(widget)
+            )
+        );
+
+        menu.appendChild(
+            this.createContextMenuButton(
                 "Focus on This Widget",
                 () => {
                     this.activateFocusMode(
@@ -15801,7 +16141,7 @@ class Board {
 
         menu.appendChild(
             this.createContextMenuButton(
-                "Create Section…",
+                "Create Group…",
                 () => {
                     this.selectWidget(widget);
                     this.openSectionDialog();
