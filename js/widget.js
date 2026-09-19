@@ -47,6 +47,7 @@ class Widget {
          * footer, and widgets can be collapsed without losing ports.
          */
         this.showStatus = true;
+        this.showMetrics = false;
         this.collapsed = false;
         this.notes = "";
         this.iconData = null;
@@ -92,6 +93,7 @@ class Widget {
         this.dragPointerStartX = 0;
         this.dragPointerStartY = 0;
         this.broughtToFrontThisDrag = false;
+        this.dragMovedDuringGesture = false;
         this.dragOffsetX = 0;
         this.dragOffsetY = 0;
         this.dragHistorySnapshot = null;
@@ -344,6 +346,7 @@ class Widget {
             this.showStatus =
                 data.showStatus;
         }
+        this.showMetrics = data.showMetrics === true;
 
         if (
             typeof data.collapsed ===
@@ -704,12 +707,18 @@ class Widget {
             statusElement
         );
 
+        const metricsElement = document.createElement("div");
+        metricsElement.className = "widget-inline-metrics";
+        metricsElement.setAttribute("aria-label", "Widget runtime and estimated memory");
+        element.appendChild(metricsElement);
+
         this.element = element;
         this.headerElement = headerElement;
         this.iconElement = iconElement;
         this.titleElement = titleElement;
         this.contentElement = contentElement;
         this.statusElement = statusElement;
+        this.metricsElement = metricsElement;
         this.statusIndicatorElement = statusIndicator;
         this.noteIndicatorElement = noteIndicator;
         this.errorIndicatorElement = errorIndicator;
@@ -799,6 +808,7 @@ class Widget {
 
         this.renderIoRows();
         this.updateStatusDisplay();
+        this.updateMetricsDisplay();
 
         if (
             this.board &&
@@ -1144,6 +1154,17 @@ class Widget {
         }
     }
 
+    updateMetricsDisplay() {
+        if (!this.metricsElement) return;
+        const visible = this.showMetrics || Boolean(this.board.showAllWidgetMetrics);
+        this.metricsElement.hidden = !visible;
+        if (visible) {
+            this.metricsElement.textContent =
+                `${Number(this.runtimeMs || 0).toFixed(1)} ms · ${Number(this.memoryKb || 0).toFixed(1)} KB`;
+            this.metricsElement.title = "Last measured runtime · estimated memory";
+        }
+    }
+
     updateStatusDisplay() {
         const allowedStatuses = [
             "idle",
@@ -1479,6 +1500,7 @@ class Widget {
             errorMessage || "";
 
         this.updateStatusDisplay();
+        this.updateMetricsDisplay();
     }
 
     addEventListeners() {
@@ -1514,6 +1536,12 @@ class Widget {
             "click",
             (event) => {
                 event.stopPropagation();
+                // Modifier selection was handled at pointerdown; avoid toggling twice.
+                if (event.ctrlKey || event.metaKey || event.shiftKey) return;
+                if (this.dragMovedDuringGesture) {
+                    this.dragMovedDuringGesture = false;
+                    return;
+                }
                 this.board.selectWidget(this);
                 this.board.pinWidgetPeek(this);
             }
@@ -1572,7 +1600,14 @@ class Widget {
         event.preventDefault();
         event.stopPropagation();
 
-        this.board.selectWidget(this);
+        if (event.ctrlKey || event.metaKey || event.shiftKey) {
+            this.board.selectWidget(this, { additive: true });
+            return;
+        }
+        if (!this.board.selectedWidgets?.has(this) ||
+            this.board.selectedWidgets.size <= 1) {
+            this.board.selectWidget(this);
+        }
 
         const pointer =
             this.board.screenToWorkspace(
@@ -1593,6 +1628,7 @@ class Widget {
             event.clientY;
         this.broughtToFrontThisDrag =
             false;
+        this.dragMovedDuringGesture = false;
 
         this.dragHistorySnapshot =
             this.board.createHistorySnapshot();
@@ -1627,6 +1663,7 @@ class Widget {
                 );
 
             if (movementDistance >= 4) {
+                this.dragMovedDuringGesture = true;
                 this.board.recordHistorySnapshot(
                     this.dragHistorySnapshot
                 );
@@ -2306,6 +2343,8 @@ class Widget {
 
             showStatus:
                 this.showStatus,
+
+            showMetrics: this.showMetrics,
 
             collapsed:
                 this.collapsed,

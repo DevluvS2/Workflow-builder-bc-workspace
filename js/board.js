@@ -4,7 +4,9 @@ class Board {
 
         this.widgets = [];
         this.selectedWidget = null;
+        this.selectedWidgets = new Set();
         this.selectedConnection = null;
+        this.showAllWidgetMetrics = false;
 
         this.nextWidgetZIndex = 3;
 
@@ -39,7 +41,7 @@ class Board {
 
         /* Guided interface tutorial. */
         this.tutorialStorageKey =
-            "workflowBuilderInterfaceTutorialSeenProfessorBatch3V1";
+            "workflowBuilderInterfaceTutorialSeenProfessorBatch4V1";
         this.tutorialActive = false;
         this.tutorialStepIndex = 0;
         this.tutorialSteps = [];
@@ -651,6 +653,22 @@ class Board {
             }
         );
 
+        const metricsOption = document.createElement("label");
+        metricsOption.className = "dropdown-check-item";
+        const metricsCheckbox = document.createElement("input");
+        metricsCheckbox.type = "checkbox";
+        metricsCheckbox.checked = this.showAllWidgetMetrics;
+        metricsCheckbox.setAttribute("aria-label", "Show metrics on all widgets");
+        metricsOption.append(metricsCheckbox, document.createTextNode(" Show Metrics for All Widgets"));
+        metricsCheckbox.addEventListener("change", () => {
+            this.showAllWidgetMetrics = metricsCheckbox.checked;
+            this.widgets.forEach(widget => widget.updateMetricsDisplay());
+            this.connections.forEach(connection => connection.update());
+            this.updateWorkflowMap();
+            this.scheduleSave();
+        });
+        this.metricsViewCheckbox = metricsCheckbox;
+
         const viewDivider = document.createElement("div");
         viewDivider.className = "dropdown-divider";
 
@@ -666,6 +684,7 @@ class Board {
         viewDropdown.appendChild(
             executionConsoleOption
         );
+        viewDropdown.appendChild(metricsOption);
         viewDropdown.appendChild(viewDivider);
         viewDropdown.appendChild(resetViewMenuItem);
         viewMenu.appendChild(viewButton);
@@ -1099,15 +1118,15 @@ class Board {
         const runToolbarButton = document.createElement("button");
         runToolbarButton.className = "history-icon-button run-toolbar-button";
         runToolbarButton.type = "button";
-        runToolbarButton.title = "Run Workflow (Ctrl+Enter)";
-        runToolbarButton.setAttribute("aria-label", "Run Workflow");
+        runToolbarButton.title = "Run Selected Widgets (Ctrl+Shift+Enter)";
+        runToolbarButton.setAttribute("aria-label", "Run Selected Widgets");
         runToolbarButton.innerHTML = `
             <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path class="run-icon-fill" d="M8 5.5L18 12L8 18.5Z"></path>
             </svg>
         `;
         runToolbarButton.addEventListener("click", () => {
-            this.runWorkflow();
+            this.runSelectedWidget();
         });
 
         const pauseToolbarButton = document.createElement("button");
@@ -2701,6 +2720,7 @@ class Board {
         }
 
         this.widgets.splice(widgetIndex, 1);
+        this.selectedWidgets.delete(widget);
 
         this.workflowGroups = this.workflowGroups
             .map((group) => ({
@@ -2723,9 +2743,12 @@ class Board {
         }
 
         if (this.selectedWidget === widget) {
-            this.selectedWidget = null;
-            this.showNoSelectionMessage();
+            this.selectedWidget = [...this.selectedWidgets].at(-1) || null;
         }
+        if (this.selectedWidgets.size > 1) this.showMultiSelectionProperties();
+        else if (this.selectedWidget) this.showWidgetProperties(this.selectedWidget);
+        else this.showNoSelectionMessage();
+        this.updateRunControls();
 
         this.updateWidgetPeek();
         this.renderWorkflowGroups();
@@ -3835,31 +3858,54 @@ class Board {
         }
     }
 
-    selectWidget(widget) {
+    selectWidget(widget, { additive = false } = {}) {
         this.clearConnectionSelection();
-
-        this.widgets.forEach(
-            (currentWidget) => {
-                currentWidget.setSelected(
-                    currentWidget === widget
-                );
+        if (!additive) this.selectedWidgets.clear();
+        if (widget && this.widgets.includes(widget)) {
+            if (additive && this.selectedWidgets.has(widget)) {
+                this.selectedWidgets.delete(widget);
+            } else {
+                this.selectedWidgets.add(widget);
             }
-        );
-
-        this.selectedWidget = widget;
-
-        if (widget) {
-            this.showWidgetProperties(
-                widget
-            );
-        } else {
-            this.showNoSelectionMessage();
         }
-
+        this.selectedWidget = this.selectedWidgets.has(widget)
+            ? widget
+            : [...this.selectedWidgets].at(-1) || null;
+        this.widgets.forEach(item => item.setSelected(this.selectedWidgets.has(item)));
+        if (this.selectedWidgets.size > 1) this.showMultiSelectionProperties();
+        else if (this.selectedWidget) this.showWidgetProperties(this.selectedWidget);
+        else this.showNoSelectionMessage();
         this.updateStats();
         this.updateWorkflowMap();
         this.updateRunControls();
         this.updateOrganizationControls();
+    }
+
+    showMultiSelectionProperties() {
+        const content = this.propertiesPanelContent;
+        if (!content) return;
+        content.replaceChildren();
+        const heading = document.createElement("h3");
+        heading.textContent = `${this.selectedWidgets.size} widgets selected`;
+        const description = document.createElement("p");
+        description.className = "panel-description";
+        description.textContent =
+            "Ctrl/⌘/Shift-click to add or remove widgets. Run Selected respects connections between selected widgets and uses saved values from unselected upstream nodes. Dragging moves only the widget you grab.";
+        const names = document.createElement("p");
+        names.className = "panel-description";
+        names.textContent = [...this.selectedWidgets].map(widget => widget.title).join(" · ");
+        const run = document.createElement("button");
+        run.type = "button";
+        run.className = "primary-property-button multi-run-button";
+        run.textContent = `Run ${this.selectedWidgets.size} Selected Widgets`;
+        run.disabled = this.isWorkflowRunning;
+        run.addEventListener("click", () => this.runSelectedWidget());
+        const clear = document.createElement("button");
+        clear.type = "button";
+        clear.className = "multi-clear-button";
+        clear.textContent = "Clear selection";
+        clear.addEventListener("click", () => this.selectWidget(null));
+        content.append(heading, description, names, run, clear);
     }
 
     selectConnection(connection) {
@@ -3880,6 +3926,7 @@ class Board {
         );
 
         this.selectedWidget = null;
+        this.selectedWidgets.clear();
 
         if (!connection) {
             this.showNoSelectionMessage();
@@ -7104,6 +7151,20 @@ class Board {
             );
         }
 
+        const metricsLabel = document.createElement("label");
+        metricsLabel.className = "property-check-label";
+        const metricsCheckbox = document.createElement("input");
+        metricsCheckbox.type = "checkbox";
+        metricsCheckbox.checked = widget.showMetrics;
+        metricsCheckbox.addEventListener("change", () => {
+            this.recordHistoryState();
+            widget.showMetrics = metricsCheckbox.checked;
+            widget.updateMetricsDisplay();
+            this.updateConnectionsForWidget(widget);
+            this.scheduleSave();
+        });
+        metricsLabel.append(metricsCheckbox, document.createTextNode(" Show metrics on this widget"));
+        statusSection.body.appendChild(metricsLabel);
         statusSection.body.appendChild(
             metricsGrid
         );
@@ -7799,6 +7860,7 @@ class Board {
 
         this.widgets = [];
         this.selectedWidget = null;
+        this.selectedWidgets.clear();
 
         this.connections = [];
 
@@ -7880,6 +7942,8 @@ class Board {
 
             this.positionElement.textContent =
                 `Workflow: ${runState}${modeLabel}`;
+        } else if (this.selectedWidgets.size > 1) {
+            this.positionElement.textContent = `${this.selectedWidgets.size} widgets selected`;
         } else if (this.selectedWidget) {
             this.positionElement.textContent =
                 `Selected: ${this.selectedWidget.title}`;
@@ -8863,6 +8927,8 @@ class Board {
             preserveResearch: true
         });
         this.appearanceSettings = this.normalizeAppearanceSettings(workflowData.appearanceSettings);
+        this.showAllWidgetMetrics = workflowData.showAllWidgetMetrics === true;
+        if (this.metricsViewCheckbox) this.metricsViewCheckbox.checked = this.showAllWidgetMetrics;
         this.applyGlobalAppearance();
 
         workflowData.widgets.forEach(
@@ -9539,18 +9605,31 @@ class Board {
                 text: "Write a condition such as value > 10. TRUE uses one output and FALSE uses the other; only the chosen branch runs."
             },
             {
+                sections: ["widgets", "run"],
+                title: "Select and run several widgets",
+                target: '[data-tour="run-controls"]',
+                text: "Ctrl/Shift-click widgets to select several. The toolbar Play button runs just the selection, in dependency order. Use Workflow → Run Workflow to run all."
+            },
+            {
+                sections: ["properties", "run", "canvas"],
+                title: "Optional metrics",
+                target: '[data-tour="view-menu"]',
+                prepare: openMenu("view-menu"),
+                text: "Use View → Show Metrics for All Widgets, or check Show metrics on this widget in Properties. Metrics are hidden by default."
+            },
+            {
                 sections: ["properties", "run", "decisions"],
                 title: "Status & Performance",
                 target: '[data-tour="properties-status"]',
                 prepare: showProps("properties-status"),
-                text: "The header indicator gives the quick status. Open Execution here for exact status, runtime, memory, branch details, and errors."
+                text: "The header shows status. Check Show metrics on this widget for runtime and memory, or use View → Show Metrics for All Widgets."
             },
             {
                 sections: ["properties", "run"],
                 title: "Validate / Run / Delete",
                 target: '[data-tour="properties-actions"]',
                 prepare: showProps("properties-actions"),
-                text: "Run This Node tests only the selected widget. Run From Here continues through its downstream path. Full Run executes everything."
+                text: "Select one node to run it, or Ctrl/Shift-click multiple nodes to run that set. Run From Here runs downstream. Full Run executes everything."
             },
             {
                 sections: ["run"],
@@ -9595,7 +9674,7 @@ class Board {
                 sections: ["shortcuts"],
                 title: "Keyboard Shortcuts",
                 target: '[data-tour="help-menu"]',
-                text: "Ctrl+K opens commands. Ctrl+Shift+F finds widgets. Ctrl+Alt+L auto-layouts. Ctrl+Enter runs everything; Ctrl+. pauses or resumes."
+                text: "Ctrl+K opens commands. Ctrl/Shift-click selects several widgets. Ctrl+Shift+Enter runs selected; Ctrl+Enter runs all. Ctrl+. pauses."
             },
             {
                 sections: ["basics"],
@@ -9740,7 +9819,7 @@ class Board {
                 "Ctrl+D — Duplicate selected widget\n" +
                 "Ctrl+S — Export workflow JSON\n" +
                 "Ctrl+Enter — Run full workflow\n" +
-                "Ctrl+Shift+Enter — Run selected node\n" +
+                "Ctrl+Shift+Enter — Run selected widget(s)\n" +
                 "Ctrl+Alt+Enter — Run from selected node\n" +
                 "Ctrl+. — Pause / resume current run\n" +
                 "Ctrl+` — Toggle execution console\n" +
@@ -9838,8 +9917,8 @@ class Board {
         const running =
             this.isWorkflowRunning;
 
-        const hasSelectedWidget =
-            Boolean(this.selectedWidget);
+        const selectedCount = this.selectedWidgets.size;
+        const hasSelectedWidget = selectedCount > 0;
 
         if (this.runWorkflowMenuItem) {
             this.runWorkflowMenuItem.disabled =
@@ -9853,9 +9932,12 @@ class Board {
         }
 
         if (this.runFromSelectedMenuItem) {
-            this.runFromSelectedMenuItem.disabled =
-                running ||
-                !hasSelectedWidget;
+            this.runFromSelectedMenuItem.disabled = running || selectedCount !== 1;
+        }
+        if (this.runSelectedMenuItem) {
+            const label = this.runSelectedMenuItem.querySelector(".workflow-menu-label");
+            if (label) label.textContent = selectedCount > 1
+                ? `Run ${selectedCount} Selected Widgets` : "Run Selected Node";
         }
 
         if (this.pauseWorkflowMenuItem) {
@@ -9903,8 +9985,11 @@ class Board {
         }
 
         if (this.runToolbarButton) {
-            this.runToolbarButton.disabled =
-                running;
+            this.runToolbarButton.disabled = running || !hasSelectedWidget;
+            this.runToolbarButton.title = selectedCount > 1
+                ? `Run ${selectedCount} Selected Widgets (Ctrl+Shift+Enter)`
+                : "Run Selected Widget (Ctrl+Shift+Enter)";
+            this.runToolbarButton.setAttribute("aria-label", this.runToolbarButton.title);
             this.runToolbarButton.classList.toggle(
                 "running",
                 running &&
@@ -10453,8 +10538,20 @@ class Board {
 
     getExecutionPlan(
         mode = "workflow",
-        widget = null
+        widget = null,
+        widgets = null
     ) {
+        if (mode === "multi-selected") {
+            const selected = [...new Set(widgets || [])].filter(item => this.widgets.includes(item));
+            const topology = this.getTopologicalOrderForWidgets(selected);
+            return {
+                mode,
+                widget: null,
+                order: topology.order,
+                hasCycle: topology.hasCycle,
+                label: `${selected.length} selected widgets`
+            };
+        }
         if (mode === "selected") {
             return {
                 mode,
@@ -10742,6 +10839,9 @@ class Board {
     runSelectedWidget(
         widget = this.selectedWidget
     ) {
+        const selected = [...this.selectedWidgets].filter(item => this.widgets.includes(item));
+        if (selected.length > 1) return this.runWorkflow({mode: "multi-selected", widgets: selected});
+        widget = selected[0] || widget;
         if (!widget) {
             void this.showMessageDialog({
                 title: "Select a Widget",
@@ -10762,6 +10862,15 @@ class Board {
     runFromSelectedWidget(
         widget = this.selectedWidget
     ) {
+        if (this.selectedWidgets.size > 1) {
+            void this.showMessageDialog({
+                title: "Choose One Widget",
+                message: "Run From Here starts at a single widget. Click one widget without holding a modifier.",
+                tone: "info",
+                confirmLabel: "Got it"
+            });
+            return;
+        }
         if (!widget) {
             void this.showMessageDialog({
                 title: "Select a Widget",
@@ -11941,7 +12050,8 @@ class Board {
     async runWorkflow(
         {
             mode = "workflow",
-            widget = null
+            widget = null,
+            widgets = null
         } = {}
     ) {
         if (this.isWorkflowRunning) {
@@ -11951,7 +12061,8 @@ class Board {
         const plan =
             this.getExecutionPlan(
                 mode,
-                widget
+                widget,
+                widgets
             );
 
         const report =
@@ -12043,9 +12154,11 @@ class Board {
         const runTitle =
             plan.mode === "workflow"
                 ? `Workflow run #${runId} started.`
-                : plan.mode === "selected"
-                    ? `Single-node run started: ${widget.title}.`
-                    : `Run-from-here started at ${widget.title}.`;
+                : plan.mode === "multi-selected"
+                    ? `Selected-set run started: ${executionOrder.length} widgets.`
+                    : plan.mode === "selected"
+                        ? `Single-node run started: ${widget.title}.`
+                        : `Run-from-here started at ${widget.title}.`;
 
         this.appendExecutionLog(
             "info",
@@ -12167,7 +12280,7 @@ class Board {
 
                     if (
                         this.selectedWidget ===
-                        executionWidget
+                        executionWidget && this.selectedWidgets.size <= 1
                     ) {
                         this.showWidgetProperties(
                             executionWidget
@@ -12209,7 +12322,7 @@ class Board {
 
                 if (
                     this.selectedWidget ===
-                    executionWidget
+                    executionWidget && this.selectedWidgets.size <= 1
                 ) {
                     this.showWidgetProperties(
                         executionWidget
@@ -12332,7 +12445,7 @@ class Board {
 
                 if (
                     this.selectedWidget ===
-                    executionWidget
+                    executionWidget && this.selectedWidgets.size <= 1
                 ) {
                     this.showWidgetProperties(
                         executionWidget
@@ -12454,9 +12567,11 @@ class Board {
                 const finishedTitle =
                     plan.mode === "workflow"
                         ? `Workflow run #${runId} completed.`
-                        : plan.mode === "selected"
-                            ? `${widget.title} completed.`
-                            : `Run from ${widget.title} completed.`;
+                        : plan.mode === "multi-selected"
+                            ? `Selected-set run completed: ${executionOrder.length} widgets.`
+                            : plan.mode === "selected"
+                                ? `${widget.title} completed.`
+                                : `Run from ${widget.title} completed.`;
 
                 this.appendExecutionLog(
                     "success",
@@ -12478,11 +12593,8 @@ class Board {
             this.updateWorkflowMap();
             this.saveState();
 
-            if (this.selectedWidget) {
-                this.showWidgetProperties(
-                    this.selectedWidget
-                );
-            }
+            if (this.selectedWidgets.size > 1) this.showMultiSelectionProperties();
+            else if (this.selectedWidget) this.showWidgetProperties(this.selectedWidget);
         }
     }
 
@@ -12505,7 +12617,8 @@ class Board {
                     this.cloneResearchValue(
                         this.workflowGroups
                     ),
-                appearanceSettings: { ...this.appearanceSettings }
+                appearanceSettings: { ...this.appearanceSettings },
+                showAllWidgetMetrics: this.showAllWidgetMetrics
             }
         );
     }
@@ -12771,6 +12884,7 @@ class Board {
         return {
             version: 5,
             appearanceSettings: { ...this.appearanceSettings },
+            showAllWidgetMetrics: this.showAllWidgetMetrics,
 
             workflowMetadata:
                 this.cloneResearchValue(
@@ -12993,6 +13107,8 @@ class Board {
             status: "running",
             mode: plan.mode,
             label: plan.label,
+            selectedWidgetIds: plan.mode === "multi-selected"
+                ? executionOrder.map(item => item.id) : [],
             startWidgetId:
                 widget ? widget.id : null,
             startWidgetTitle:
@@ -13707,7 +13823,10 @@ class Board {
 
         await this.runWorkflow({
             mode: run.mode || "workflow",
-            widget: targetWidget
+            widget: targetWidget,
+            widgets: run.mode === "multi-selected"
+                ? (run.selectedWidgetIds || []).map(id => this.widgets.find(item => item.id === id)).filter(Boolean)
+                : null
         });
     }
 
