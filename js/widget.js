@@ -1243,7 +1243,7 @@ class Widget {
             }
 
             if (
-                normalizedStatus === "error" &&
+                (normalizedStatus === "error" || normalizedStatus === "stopped") &&
                 this.lastError
             ) {
                 tooltip +=

@@ -4143,3 +4143,19 @@ body {
 .multi-run-button:disabled { cursor: not-allowed; opacity: .45; }
 .property-check-label { display: flex; gap: 8px; align-items: center; margin: 9px 0; font-size: 12px; }
 .property-check-label input { flex: none; }
+
+/* Batch 5: recovered local runs are historical, not live processes. */
+.research-run-status.status-interrupted {
+    border-color: #fcd34d;
+    color: #854d0e;
+}
+.research-interruption-note {
+    padding: 10px 12px;
+    border: 1px solid var(--ui-border);
+    border-left: 3px solid #b45309;
+    border-radius: var(--ui-radius, 6px);
+    background: var(--ui-surface-soft);
+    color: var(--ui-text-soft);
+    font-size: 12px;
+    line-height: 1.5;
+}

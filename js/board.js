@@ -126,6 +126,11 @@ class Board {
         this.currentExecutionLabel = "";
         this.currentRunningWidget = null;
         this.executionRunId = 0;
+        // Browser-only runs cannot survive navigation. Persist a checkpoint so
+        // the next page load can accurately mark unfinished work interrupted.
+        this.executionCheckpoint = null;
+        this.activeExecutionRecord = null;
+        this.lastInterruptedRunInfo = null;
         this.lastRunRuntimeMs = 0;
         this.lastRunMemoryKb = 0;
         this.lastValidationReport = {
@@ -206,6 +211,12 @@ class Board {
         );
 
         this.render();
+
+        // A final synchronous checkpoint for a reload/tab close. Per-node
+        // checkpoints below provide recovery even when pagehide is not fired.
+        window.addEventListener("pagehide", () => {
+            if (this.isWorkflowRunning) this.saveState();
+        });
 
         window.setTimeout(
             () => this.maybeStartFirstRunTutorial(),
@@ -7833,6 +7844,9 @@ class Board {
         this.currentExecutionWidgetIds = new Set();
         this.currentExecutionLabel = "";
         this.currentRunningWidget = null;
+        this.executionCheckpoint = null;
+        this.activeExecutionRecord = null;
+        this.lastInterruptedRunInfo = null;
         this.releaseWorkflowPauseWaiters();
 
         this.clearAllWidgetPeek();
@@ -7942,6 +7956,9 @@ class Board {
 
             this.positionElement.textContent =
                 `Workflow: ${runState}${modeLabel}`;
+        } else if (this.lastInterruptedRunInfo) {
+            this.positionElement.textContent =
+                `Previous run interrupted · ${this.lastInterruptedRunInfo.label}`;
         } else if (this.selectedWidgets.size > 1) {
             this.positionElement.textContent = `${this.selectedWidgets.size} widgets selected`;
         } else if (this.selectedWidget) {
@@ -8926,6 +8943,10 @@ class Board {
         this.clearWorkflow({
             preserveResearch: true
         });
+        this.executionCheckpoint = workflowData.executionCheckpoint &&
+            typeof workflowData.executionCheckpoint === "object" &&
+            !Array.isArray(workflowData.executionCheckpoint)
+            ? workflowData.executionCheckpoint : null;
         this.appearanceSettings = this.normalizeAppearanceSettings(workflowData.appearanceSettings);
         this.showAllWidgetMetrics = workflowData.showAllWidgetMetrics === true;
         if (this.metricsViewCheckbox) this.metricsViewCheckbox.checked = this.showAllWidgetMetrics;
@@ -9164,6 +9185,9 @@ class Board {
         this.updateWorkflowMap();
         this.updateOrganizationControls();
 
+        // This also runs for imported JSON: an exported browser checkpoint
+        // represents historical work, never a live process on this machine.
+        this.reconcileInterruptedExecution();
         this.scheduleSave();
     }
 
@@ -9636,7 +9660,7 @@ class Board {
                 title: "Reset workflow state",
                 target: '[data-tour="workflow-menu"]',
                 prepare: openMenu("workflow-menu"),
-                text: "Reset clears results, statuses, and metrics but keeps your setup and run history."
+                text: "Reset clears results and metrics but keeps your setup and history. If you refresh during a run, unfinished nodes become Stopped; completed results stay saved."
             },
             {
                 sections: ["run", "console"],
@@ -9831,6 +9855,110 @@ class Board {
         });
     }
 
+    createExecutionCheckpoint(record, plan, executionOrder) {
+        this.activeExecutionRecord = record;
+        this.lastInterruptedRunInfo = null;
+        this.executionCheckpoint = {
+            schemaVersion: 1,
+            runId: record.runNumber,
+            state: "running",
+            mode: plan.mode,
+            label: plan.label,
+            widgetIds: executionOrder.map((item) => item.id),
+            currentWidgetId: null,
+            startedAt: record.startedAt,
+            updatedAt: new Date().toISOString(),
+            // The pre-run configuration is retained for an interrupted run's
+            // research record. This snapshot is not another execution engine.
+            record
+        };
+        this.saveState();
+    }
+
+    updateExecutionCheckpoint(state, currentWidgetId = null, runId = this.executionRunId) {
+        const checkpoint = this.executionCheckpoint;
+        if (!checkpoint || checkpoint.runId !== runId) return;
+        checkpoint.state = state;
+        checkpoint.currentWidgetId = currentWidgetId;
+        checkpoint.updatedAt = new Date().toISOString();
+        // Immediate durability at state boundaries; no saving every timer tick.
+        this.saveState();
+    }
+
+    reconcileInterruptedExecution() {
+        const checkpoint = this.executionCheckpoint;
+        const unfinishedStatuses = new Set(["running", "waiting", "idle"]);
+        const interrupted = checkpoint && ["running", "paused"].includes(checkpoint.state);
+        const unfinishedIds = checkpoint && Array.isArray(checkpoint.widgetIds)
+            ? new Set(checkpoint.widgetIds) : new Set();
+        const orphanedRunning = this.widgets.filter((item) => item.status === "running");
+
+        if (!checkpoint && orphanedRunning.length === 0) return;
+
+        const failedBeforeClose = checkpoint?.state === "error";
+        const reason = failedBeforeClose
+            ? "Execution failed before the browser session ended; the failed result was preserved."
+            : "Browser session ended. Local execution cannot resume after refresh; run again to continue.";
+        const affected = this.widgets.filter((item) =>
+            (unfinishedIds.has(item.id) && unfinishedStatuses.has(item.status)) ||
+            item.status === "running"
+        );
+        affected.forEach((item) => {
+            // Keep results and measurements from completed nodes untouched.
+            // Mark pending/running nodes stopped instead of pretending they ran.
+            item.setStatus("stopped", item.runtimeMs, item.memoryKb, reason);
+        });
+
+        const record = checkpoint?.record;
+        const executionOrder = checkpoint?.widgetIds?.map((id) =>
+            this.widgets.find((item) => item.id === id)
+        ).filter(Boolean) || [];
+        if (record && !this.runHistory.some((run) => run.id === record.id)) {
+            record.interruptionReason = failedBeforeClose || interrupted ? reason :
+                "The previous session ended before the run record was finalized.";
+            this.finalizeResearchRunRecord(record, executionOrder, {
+                status: checkpoint.state === "error" ? "failed" :
+                    checkpoint.state === "stopped" ? "stopped" : "interrupted",
+                runtimeMs: executionOrder.reduce((sum, item) => sum + (Number(item.runtimeMs) || 0), 0),
+                memoryKb: executionOrder.reduce((sum, item) => sum + (Number(item.memoryKb) || 0), 0)
+            });
+        }
+        this.executionRunId = Math.max(
+            this.executionRunId,
+            Number(checkpoint?.runId) || 0,
+            ...this.runHistory.map((run) => Number(run.runNumber) || 0)
+        );
+        this.lastRunRuntimeMs = this.widgets.reduce((sum, item) => sum + (Number(item.runtimeMs) || 0), 0);
+        this.lastRunMemoryKb = this.widgets.reduce((sum, item) => sum + (Number(item.memoryKb) || 0), 0);
+        this.lastInterruptedRunInfo = {
+            label: checkpoint?.label || "Unfinished workflow",
+            runId: checkpoint?.runId || null
+        };
+        this.executionCheckpoint = null;
+        this.activeExecutionRecord = null;
+        this.isWorkflowRunning = false;
+        this.isWorkflowPaused = false;
+        this.currentRunningWidget = null;
+        this.currentExecutionMode = "idle";
+        this.currentExecutionWidgetIds = new Set();
+        this.currentExecutionLabel = "";
+        this.releaseWorkflowPauseWaiters();
+        this.setExecutionConsoleStatus(failedBeforeClose ? "error" : "stopped");
+        this.setExecutionConsoleOpen(true);
+        this.appendExecutionLog(
+            failedBeforeClose ? "error" : "warning",
+            failedBeforeClose ? "Previous workflow run failed." : "Previous workflow run interrupted.",
+            `${reason} Completed nodes and their outputs/metrics were retained.`,
+            { open: true }
+        );
+        this.updateRunControls();
+        this.updateStats();
+        this.updateWorkflowMap();
+        // Clear the checkpoint NOW so subsequent refreshes do not log the same
+        // interruption or insert the same research run twice.
+        this.saveState();
+    }
+
     pauseWorkflowRun() {
         if (
             !this.isWorkflowRunning ||
@@ -9840,6 +9968,7 @@ class Board {
         }
 
         this.isWorkflowPaused = true;
+        this.updateExecutionCheckpoint("paused", this.currentRunningWidget?.id || null);
         this.setExecutionConsoleStatus("paused");
         this.appendExecutionLog(
             "info",
@@ -9861,6 +9990,7 @@ class Board {
         }
 
         this.isWorkflowPaused = false;
+        this.updateExecutionCheckpoint("running", this.currentRunningWidget?.id || null);
         this.setExecutionConsoleStatus("running");
         this.releaseWorkflowPauseWaiters();
         this.appendExecutionLog(
@@ -11318,6 +11448,9 @@ class Board {
 
         this.recordHistoryState();
         if (this.isWorkflowRunning) this.stopWorkflowRun();
+        this.executionCheckpoint = null;
+        this.activeExecutionRecord = null;
+        this.lastInterruptedRunInfo = null;
         this.isWorkflowPaused = false;
         this.currentExecutionMode = "idle";
         this.currentExecutionWidgetIds = new Set();
@@ -11385,10 +11518,14 @@ class Board {
     }
 
     stopWorkflowRun() {
-        if (!this.isWorkflowRunning) {
-            return;
-        }
+        if (!this.isWorkflowRunning) return;
 
+        const checkpoint = this.executionCheckpoint;
+        const record = this.activeExecutionRecord;
+        const order = (checkpoint?.widgetIds || []).map((id) =>
+            this.widgets.find((item) => item.id === id)
+        ).filter(Boolean);
+        // Invalidate the pending async execution before changing anything else.
         this.executionRunId += 1;
         this.isWorkflowRunning = false;
         this.isWorkflowPaused = false;
@@ -11397,34 +11534,31 @@ class Board {
         this.currentExecutionLabel = "";
         this.currentRunningWidget = null;
         this.releaseWorkflowPauseWaiters();
-        this.setExecutionConsoleStatus(
-            "stopped"
-        );
+
+        order.forEach((item) => {
+            if (["running", "waiting", "idle"].includes(item.status)) {
+                item.setStatus("stopped", item.runtimeMs, item.memoryKb, "Stopped by user.");
+            }
+        });
+        this.setExecutionConsoleStatus("stopped");
         this.appendExecutionLog(
-            "warning",
-            "Workflow run stopped by user.",
-            "Any node that was running has been marked stopped.",
+            "warning", "Workflow run stopped by user.",
+            "Completed node results remain available; unfinished nodes were marked stopped.",
             { open: true }
         );
-
-        this.widgets.forEach(
-            (widget) => {
-                if (
-                    widget.status ===
-                    "running"
-                ) {
-                    widget.setStatus(
-                        "stopped",
-                        widget.runtimeMs,
-                        widget.memoryKb
-                    );
-                }
-            }
-        );
-
+        if (record && !record.completedAt) {
+            this.finalizeResearchRunRecord(record, order, {
+                status: "stopped",
+                runtimeMs: order.reduce((sum, item) => sum + (Number(item.runtimeMs) || 0), 0),
+                memoryKb: order.reduce((sum, item) => sum + (Number(item.memoryKb) || 0), 0)
+            });
+        }
+        this.executionCheckpoint = null;
+        this.activeExecutionRecord = null;
         this.updateRunControls();
         this.updateStats();
-        this.scheduleSave();
+        this.updateWorkflowMap();
+        this.saveState();
     }
 
     async waitForExecution(
@@ -12143,6 +12277,7 @@ class Board {
         this.currentExecutionLabel =
             plan.label;
         this.currentRunningWidget = null;
+        this.lastInterruptedRunInfo = null;
 
         this.setExecutionConsoleStatus(
             "running"
@@ -12208,6 +12343,9 @@ class Board {
         );
 
         this.updateStats();
+        // Save the actual initial statuses and the pre-run research snapshot
+        // before the first awaited delay can be interrupted by a refresh.
+        this.createExecutionCheckpoint(researchRunRecord, plan, executionOrder);
 
         let runFailed = false;
 
@@ -12289,6 +12427,7 @@ class Board {
 
                     this.currentRunningWidget =
                         null;
+                    this.updateExecutionCheckpoint("running", null, runId);
                     continue;
                 }
 
@@ -12310,6 +12449,7 @@ class Board {
                     0,
                     0
                 );
+                this.updateExecutionCheckpoint("running", executionWidget.id, runId);
                 this.updateStats();
 
                 this.appendExecutionLog(
@@ -12454,6 +12594,7 @@ class Board {
 
                 this.currentRunningWidget =
                     null;
+                this.updateExecutionCheckpoint("running", null, runId);
             }
         } catch (error) {
             if (
@@ -12484,6 +12625,7 @@ class Board {
                 );
             }
 
+            this.updateExecutionCheckpoint("error", runningWidget?.id || null, runId);
             this.setExecutionConsoleStatus(
                 "error"
             );
@@ -12507,6 +12649,11 @@ class Board {
             const isCurrentRun =
                 runId ===
                 this.executionRunId;
+
+            // A user stop, New, Import or Reset may have already finalized or
+            // discarded this run. Its delayed coroutine must not alter the
+            // next workflow or insert duplicate history records.
+            if (!isCurrentRun || researchRunRecord.completedAt) return;
 
             if (isCurrentRun) {
                 this.isWorkflowRunning = false;
@@ -12588,6 +12735,8 @@ class Board {
                 this.currentExecutionLabel = "";
             }
 
+            this.executionCheckpoint = null;
+            this.activeExecutionRecord = null;
             this.updateRunControls();
             this.updateStats();
             this.updateWorkflowMap();
@@ -12864,6 +13013,10 @@ class Board {
             this.applyWorkflowData(
                 workflowData
             );
+            this.executionRunId = Math.max(
+                this.executionRunId,
+                ...this.runHistory.map((run) => Number(run.runNumber) || 0)
+            );
 
             return true;
         } catch (error) {
@@ -12882,7 +13035,10 @@ class Board {
 
     getWorkflowData() {
         return {
-            version: 5,
+            version: 6,
+            // Null when idle; active checkpoints are deliberately not a
+            // promise that work will resume after a browser reload.
+            executionCheckpoint: this.executionCheckpoint,
             appearanceSettings: { ...this.appearanceSettings },
             showAllWidgetMetrics: this.showAllWidgetMetrics,
 
@@ -13674,6 +13830,13 @@ class Board {
         });
 
         body.appendChild(metrics);
+
+        if (run.interruptionReason) {
+            const notice = document.createElement("p");
+            notice.className = "research-interruption-note";
+            notice.textContent = run.interruptionReason;
+            body.appendChild(notice);
+        }
 
         const tableWrap =
             document.createElement("div");
