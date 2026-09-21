@@ -765,10 +765,6 @@ button {
         non-scaling-stroke;
 }
 
-.connection-arrow-shape {
-    fill: #64748b;
-}
-
 .connection-preview {
     stroke: #2563eb;
 
@@ -1305,55 +1301,13 @@ button {
     right: -18px;
 }
 
-.widget-status {
-    min-height: 27px;
-    padding: 6px 10px;
-    border-top: 1px solid #e2e8f0;
-    border-radius: 0 0 7px 7px;
-    background-color: #f8fafc;
-    color: #64748b;
-    font-size: 10.5px;
-    line-height: 1.35;
-}
-
-.widget-status.status-idle {
-    color: #64748b;
-}
-
-.widget-status.status-waiting {
-    color: #64748b;
-}
-
-.widget-status.status-running {
-    background-color: #eff6ff;
-    color: #1d4ed8;
-    font-weight: 600;
-}
-
-.widget-status.status-finished {
-    background-color: #f0fdf4;
-    color: #15803d;
-}
-
-.widget-status.status-error {
-    background-color: #fef2f2;
-    color: #b91c1c;
-    font-weight: 600;
-}
-
-.widget-status.status-stopped {
-    background-color: #fff7ed;
-    color: #c2410c;
-}
-
 /* Keep endpoint ports visible when Connection Peek fades a widget. */
 .widget.connection-peek-covering .widget-content {
     opacity: 1;
 }
 
 .widget.connection-peek-covering .widget-io-text,
-.widget.connection-peek-covering .widget-empty-io,
-.widget.connection-peek-covering .widget-status {
+.widget.connection-peek-covering .widget-empty-io {
     opacity: 0.12;
 }
 
@@ -2120,11 +2074,6 @@ button {
         );
 }
 
-/* Keep arrowheads synchronized with the connection stroke when supported. */
-.connection-arrow-shape {
-    fill: context-stroke;
-}
-
 /* =========================================================
    Decision-node branching
    ========================================================= */
@@ -2133,13 +2082,6 @@ button {
     display: flex;
     align-items: center;
     gap: 7px;
-}
-
-.widget[data-widget-type="Decision"] .widget-title::before {
-    content: "◇";
-    color: #7c3aed;
-    font-size: 14px;
-    line-height: 1;
 }
 
 .widget-branch-badge {
@@ -2175,12 +2117,6 @@ button {
 
 .widget-io-row.decision-branch-not-selected {
     opacity: 0.48;
-}
-
-.widget-status.status-skipped {
-    background-color: #f8fafc;
-    color: #94a3b8;
-    font-style: italic;
 }
 
 .decision-condition-input {
@@ -2692,10 +2628,6 @@ button {
 }
 
 /* Decision identity stays structural instead of relying on a bright color. */
-.widget[data-widget-type="Decision"] .widget-title::before {
-    color: #64748b;
-}
-
 /* ---------------- Progressive Properties panel ---------------- */
 .property-group {
     margin: 0 0 8px;
@@ -3988,9 +3920,6 @@ body {
 /* =========================================================
    Professor feedback · Batch 1: quiet canvas and clear status
    ========================================================= */
-/* No directional arrowhead: the visible connection ends as a clean line. */
-.connection-arrow-shape { display: none; }
-
 /* The former port-type colors are intentionally neutralized. The engine
    still recognizes legacy saved port metadata during the transition. */
 .widget-port[data-data-type] {
@@ -4035,10 +3964,6 @@ body {
 }
 
 /* No baked-in preset icon: user-uploaded widget icons arrive in Batch 2. */
-.widget[data-widget-type="Decision"] .widget-title::before {
-    content: none;
-}
-
 /* Professor feedback · Batch 2: accessible, restrained appearance options. */
 .widget { border-color: var(--widget-border-custom, #64748b); }
 .widget-title { background-color: var(--widget-header-custom, #e2e8f0); }

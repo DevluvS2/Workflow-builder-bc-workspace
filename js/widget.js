@@ -1748,7 +1748,7 @@ class Widget {
 
         this.board.updateWidgetPeek();
         this.board.updateConnectionPeek();
-        this.board.updateWorkflowMap();
+        this.board.requestWorkflowMapUpdate();
     }
 
     stopDragging(event) {
@@ -1773,6 +1773,7 @@ class Widget {
 
         this.board.clearAlignmentGuides();
         this.board.renderWorkflowGroups();
+        this.board.updateWorkflowMap(); // Final position is shown before saving.
         this.board.updateStats();
         this.board.scheduleSave();
 

@@ -23,6 +23,8 @@ class Board {
         this.hoverPeekConnections = [];
 
         this.connections = [];
+        // Indexed membership is kept in sync by add/remove/clearConnection.
+        this.connectionsByWidget = new Map();
         this.nextConnectionNumber = 1;
 
         this.connectionSourceWidget = null;
@@ -103,6 +105,9 @@ class Board {
             "workflowBuilderCurrentWorkflow";
 
         this.saveTimer = null;
+        this.workflowMapFrame = null;
+        this.lastSavedWorkflowJSON = null;
+        this.storageWarningShown = false;
 
         /*
          * Undo / Redo history.
@@ -3278,7 +3283,8 @@ class Board {
 
     connectionIntersectsWidget(
         connection,
-        widget
+        widget,
+        geometry = null
     ) {
         if (
             !connection ||
@@ -3297,15 +3303,22 @@ class Board {
             return false;
         }
 
-        const path =
-            connection.element;
-
+        const path = connection.element;
         let totalLength;
-
+        let pathBounds;
         try {
-            totalLength =
-                path.getTotalLength();
+            // Geometry is shared by all candidate widgets for this connection.
+            totalLength = geometry ? geometry.totalLength : path.getTotalLength();
+            pathBounds = geometry ? geometry.bounds : path.getBBox();
         } catch (error) {
+            return false;
+        }
+        // Cheap bounding-box rejection before expensive SVG point sampling.
+        const padding = 6;
+        if (bounds.right + padding < pathBounds.x ||
+            bounds.left - padding > pathBounds.x + pathBounds.width ||
+            bounds.bottom + padding < pathBounds.y ||
+            bounds.top - padding > pathBounds.y + pathBounds.height) {
             return false;
         }
 
@@ -3327,8 +3340,6 @@ class Board {
         * A small tolerance catches lines that
         * pass extremely close to a widget edge.
         */
-        const padding = 6;
-
 
         /*
         * Ignore a short distance immediately
@@ -3410,19 +3421,19 @@ class Board {
         return false;
     }
 
-    getWidgetsCoveringConnection(
-        connection
-    ) {
-        return this.widgets.filter(
-            (widget) => {
-                return (
-                    this.connectionIntersectsWidget(
-                        connection,
-                        widget
-                    )
-                );
-            }
-        );
+    getWidgetsCoveringConnection(connection) {
+        if (!connection?.element) return [];
+        let geometry;
+        try {
+            geometry = {
+                totalLength: connection.element.getTotalLength(),
+                bounds: connection.element.getBBox()
+            };
+        } catch (error) {
+            return [];
+        }
+        return this.widgets.filter(widget =>
+            this.connectionIntersectsWidget(connection, widget, geometry));
     }
 
     clearConnectionPeekVisuals() {
@@ -4837,17 +4848,11 @@ class Board {
         );
     }
 
-    getIncomingConnections(
-        widget,
-        inputPortId
-    ) {
-        return this.connections.filter(
-            (connection) =>
-                connection.targetWidget ===
-                    widget &&
-                connection.targetPortId ===
-                    inputPortId
-        );
+    getIncomingConnections(widget, inputPortId) {
+        // Set preserves connection insertion order for multi-source array inputs.
+        return Array.from(this.connectionsByWidget.get(widget.id) || [])
+            .filter(connection => connection.targetWidget === widget &&
+                connection.targetPortId === inputPortId);
     }
 
     getIncomingConnection(
@@ -4970,17 +4975,10 @@ class Board {
         return input.value;
     }
 
-    getOutgoingConnections(
-        widget,
-        outputPortId
-    ) {
-        return this.connections.filter(
-            (connection) =>
-                connection.sourceWidget ===
-                    widget &&
-                connection.sourcePortId ===
-                    outputPortId
-        );
+    getOutgoingConnections(widget, outputPortId) {
+        return Array.from(this.connectionsByWidget.get(widget.id) || [])
+            .filter(connection => connection.sourceWidget === widget &&
+                connection.sourcePortId === outputPortId);
     }
 
     propagateOutputValue(
@@ -7776,7 +7774,7 @@ class Board {
                 `Zoom: ${percentage}%`;
         }
 
-        this.updateWorkflowMap();
+        this.updateWorkflowMapViewport();
     }
 
     screenToWorkspace(clientX, clientY) {
@@ -7988,7 +7986,19 @@ class Board {
         }
     }
 
+    requestWorkflowMapUpdate() {
+        if (this.workflowMapFrame !== null) return;
+        this.workflowMapFrame = requestAnimationFrame(() => {
+            this.workflowMapFrame = null;
+            this.updateWorkflowMap();
+        });
+    }
+
     updateWorkflowMap() {
+        if (this.workflowMapFrame !== null) {
+            cancelAnimationFrame(this.workflowMapFrame);
+            this.workflowMapFrame = null;
+        }
         if (!this.workflowMapContent) {
             return;
         }
@@ -8284,10 +8294,23 @@ class Board {
             );
         }
 
-        /*
-         * Red rectangle representing the visible portion
-         * of the main workspace.
-         */
+        const viewport = document.createElement("div");
+        viewport.className = "workflow-map-viewport";
+        this.workflowMapContent.appendChild(viewport);
+        this.workflowMapViewport = viewport;
+        this.updateWorkflowMapViewport();
+    }
+
+    // Panning/zooming only changes the viewport; mini widgets/edges stay mounted.
+    updateWorkflowMapViewport() {
+        if (!this.workflowMapContent || !this.workspaceContainer) return;
+        if (!this.workflowMapViewport ||
+            this.workflowMapViewport.parentNode !== this.workflowMapContent) {
+            this.updateWorkflowMap();
+            return;
+        }
+        const mapWidth = this.workflowMapContent.clientWidth || 198;
+        const mapHeight = this.workflowMapContent.clientHeight || 112;
         const worldLeft =
             -this.panX /
             this.zoom;
@@ -8372,30 +8395,11 @@ class Board {
                 )
             );
 
-        const viewport =
-            document.createElement(
-                "div"
-            );
-
-        viewport.className =
-            "workflow-map-viewport";
-
-        viewport.style.left =
-            `${viewportLeft}px`;
-
-        viewport.style.top =
-            `${viewportTop}px`;
-
-        viewport.style.width =
-            `${viewportWidth}px`;
-
-        viewport.style.height =
-            `${viewportHeight}px`;
-
-        this.workflowMapContent
-            .appendChild(
-                viewport
-            );
+        const viewport = this.workflowMapViewport;
+        viewport.style.left = `${viewportLeft}px`;
+        viewport.style.top = `${viewportTop}px`;
+        viewport.style.width = `${viewportWidth}px`;
+        viewport.style.height = `${viewportHeight}px`;
     }
 
     createPanelShowZone(side) {
@@ -8893,16 +8897,74 @@ class Board {
         }
     }
 
+    validateWorkflowData(data) {
+        // Check the structure BEFORE clearing the user's current canvas. Old
+        // exports without explicit port IDs remain supported.
+        if (!data || typeof data !== "object" || Array.isArray(data) ||
+            !Array.isArray(data.widgets) || data.widgets.length > 1500 ||
+            (data.connections !== undefined && !Array.isArray(data.connections)) ||
+            (data.connections || []).length > 10000) {
+            throw new Error("Invalid workflow structure or excessive widget/connection count.");
+        }
+        const widgetIds = new Set();
+        const portsByWidget = new Map();
+        for (const widget of data.widgets) {
+            if (!widget || typeof widget !== "object" || Array.isArray(widget) ||
+                typeof widget.id !== "string" || !widget.id || widget.id.length > 128 ||
+                widgetIds.has(widget.id) || !Number.isFinite(widget.x) ||
+                !Number.isFinite(widget.y) ||
+                (widget.inputs !== undefined && !Array.isArray(widget.inputs)) ||
+                (widget.outputs !== undefined && !Array.isArray(widget.outputs))) {
+                throw new Error("Workflow contains a duplicate or invalid widget.");
+            }
+            widgetIds.add(widget.id);
+            const ports = { input: new Set(), output: new Set() };
+            for (const [key, direction] of [["inputs", "input"], ["outputs", "output"]]) {
+                const list = widget[key] || [];
+                if (list.length > 100) throw new Error("A widget has too many ports.");
+                for (const port of list) {
+                    if (!port || typeof port.id !== "string" || !port.id ||
+                        port.id.length > 128 || ports[direction].has(port.id)) {
+                        throw new Error("A widget has duplicate or invalid port IDs.");
+                    }
+                    ports[direction].add(port.id);
+                }
+            }
+            portsByWidget.set(widget.id, ports);
+        }
+        for (const connection of data.connections || []) {
+            if (!connection || typeof connection !== "object" ||
+                !widgetIds.has(connection.sourceWidgetId) ||
+                !widgetIds.has(connection.targetWidgetId) ||
+                connection.sourceWidgetId === connection.targetWidgetId) {
+                throw new Error("A connection points to a missing or invalid widget.");
+            }
+            if (connection.sourcePortId != null &&
+                !portsByWidget.get(connection.sourceWidgetId).output.has(connection.sourcePortId)) {
+                throw new Error("A connection references a missing output port.");
+            }
+            if (connection.targetPortId != null &&
+                !portsByWidget.get(connection.targetWidgetId).input.has(connection.targetPortId)) {
+                throw new Error("A connection references a missing input port.");
+            }
+        }
+        for (const name of ["zoom", "panX", "panY", "leftPanelWidth", "rightPanelWidth"]) {
+            if (data[name] !== undefined && !Number.isFinite(data[name])) {
+                throw new Error(`Invalid saved view setting: ${name}.`);
+            }
+        }
+        return data;
+    }
+
     importWorkflow(file) {
+        if (file.size > 12000000) {
+            this.showMessageDialog({title: "Import Failed", message: "Workflow file exceeds 12 MB.", tone: "error"});
+            return;
+        }
         const reader = new FileReader();
         reader.addEventListener("load", async () => {
             try {
-                if (file.size > 12000000) throw new Error("Workflow file exceeds 12 MB.");
-                const data = JSON.parse(reader.result);
-                if (!data || !Array.isArray(data.widgets) || data.widgets.length > 1500 ||
-                    (data.connections !== undefined && !Array.isArray(data.connections))) {
-                    throw new Error("This file does not contain a valid workflow.");
-                }
+                const data = this.validateWorkflowData(JSON.parse(reader.result));
                 const hasTemplates = Array.isArray(data.widgetTemplates) && data.widgetTemplates.length > 0;
                 const includeTemplates = await this.showWorkflowTemplateOptionDialog({mode: "import", hasTemplates});
                 if (includeTemplates === null) return;
@@ -8991,10 +9053,9 @@ class Board {
             }
         );
 
-        /*
-        * Recreate saved workflow connections
-        * after all widgets exist.
-        */
+        /* Resolve saved edges in linear time rather than searching all widgets
+         * for every connection on large imported research graphs. */
+        const widgetsById = new Map(this.widgets.map(widget => [widget.id, widget]));
         if (
             Array.isArray(
                 workflowData.connections
@@ -9003,21 +9064,8 @@ class Board {
             workflowData.connections.forEach(
                 (connectionData) => {
 
-                    const sourceWidget =
-                        this.widgets.find(
-                            (widget) =>
-                                widget.id ===
-                                connectionData
-                                    .sourceWidgetId
-                        );
-
-                    const targetWidget =
-                        this.widgets.find(
-                            (widget) =>
-                                widget.id ===
-                                connectionData
-                                    .targetWidgetId
-                        );
+                    const sourceWidget = widgetsById.get(connectionData.sourceWidgetId);
+                    const targetWidget = widgetsById.get(connectionData.targetWidgetId);
 
                     /*
                     * Ignore invalid connections instead
@@ -9068,11 +9116,7 @@ class Board {
                             Array.isArray(group.widgetIds)
                                 ? group.widgetIds
                                     .map(String)
-                                    .filter((id) =>
-                                        this.widgets.some(
-                                            (widget) => widget.id === id
-                                        )
-                                    )
+                                    .filter((id) => widgetsById.has(id))
                                 : []
                     }))
                     .filter(
@@ -9092,12 +9136,8 @@ class Board {
         this.nextGroupNumber =
             Math.max(0, ...groupNumbers) + 1;
 
-        if (
-            typeof workflowData.zoom ===
-            "number"
-        ) {
-            this.zoom =
-                workflowData.zoom;
+        if (Number.isFinite(workflowData.zoom)) {
+            this.zoom = Math.max(this.minimumZoom, Math.min(this.maximumZoom, workflowData.zoom));
         }
 
         if (
@@ -9116,20 +9156,11 @@ class Board {
                 workflowData.panY;
         }
 
-        if (
-            typeof workflowData.leftPanelWidth ===
-            "number"
-        ) {
-            this.leftPanelWidth =
-                workflowData.leftPanelWidth;
+        if (Number.isFinite(workflowData.leftPanelWidth)) {
+            this.leftPanelWidth = Math.max(160, Math.min(500, workflowData.leftPanelWidth));
         }
-
-        if (
-            typeof workflowData.rightPanelWidth ===
-            "number"
-        ) {
-            this.rightPanelWidth =
-                workflowData.rightPanelWidth;
+        if (Number.isFinite(workflowData.rightPanelWidth)) {
+            this.rightPanelWidth = Math.max(160, Math.min(500, workflowData.rightPanelWidth));
         }
 
         if (!preserveResearch) {
@@ -10587,8 +10618,8 @@ class Board {
 
         const order = [];
 
-        while (queue.length > 0) {
-            const widget = queue.shift();
+        for (let queueIndex = 0; queueIndex < queue.length; queueIndex += 1) {
+            const widget = queue[queueIndex];
             order.push(widget);
 
             outgoing
@@ -10641,15 +10672,11 @@ class Board {
         const queue =
             [startWidget];
 
-        while (queue.length > 0) {
-            const widget = queue.shift();
+        for (let queueIndex = 0; queueIndex < queue.length; queueIndex += 1) {
+            const widget = queue[queueIndex];
 
-            this.connections
-                .filter(
-                    (connection) =>
-                        connection.sourceWidget ===
-                        widget
-                )
+            Array.from(this.connectionsByWidget.get(widget.id) || [])
+                .filter(connection => connection.sourceWidget === widget)
                 .forEach(
                     (connection) => {
                         const target =
@@ -12961,20 +12988,25 @@ class Board {
 
     saveState() {
         try {
-            const workflowData =
-                this.getWorkflowData();
-
-            localStorage.setItem(
-                this.storageKey,
-                JSON.stringify(
-                    workflowData
-                )
-            );
+            clearTimeout(this.saveTimer);
+            this.saveTimer = null;
+            const json = JSON.stringify(this.getWorkflowData());
+            if (json === this.lastSavedWorkflowJSON) return true;
+            localStorage.setItem(this.storageKey, json);
+            this.lastSavedWorkflowJSON = json;
+            this.storageWarningShown = false;
+            return true;
         } catch (error) {
-            console.error(
-                "Could not save workflow:",
-                error
-            );
+            console.error("Could not save workflow:", error);
+            if (!this.storageWarningShown) {
+                this.storageWarningShown = true;
+                this.showMessageDialog({
+                    title: "Workflow Not Saved",
+                    message: "Browser storage is unavailable or full. Export your workflow JSON now to avoid losing changes.",
+                    tone: "error"
+                });
+            }
+            return false;
         }
     }
 
@@ -12997,22 +13029,24 @@ class Board {
     }
 
     loadState() {
-        const savedState =
-            localStorage.getItem(
-                this.storageKey
-            );
-
-        if (!savedState) {
+        let savedState;
+        try {
+            savedState = localStorage.getItem(this.storageKey);
+        } catch (error) {
+            console.error("Could not access browser storage:", error);
             return false;
         }
+        if (!savedState) return false;
 
         try {
             const workflowData =
                 JSON.parse(savedState);
 
+            this.validateWorkflowData(workflowData);
             this.applyWorkflowData(
                 workflowData
             );
+            this.lastSavedWorkflowJSON = savedState;
             this.executionRunId = Math.max(
                 this.executionRunId,
                 ...this.runHistory.map((run) => Number(run.runNumber) || 0)
@@ -13020,16 +13054,17 @@ class Board {
 
             return true;
         } catch (error) {
-            console.error(
-                "Saved workflow is invalid:",
-                error
-            );
-
-            localStorage.removeItem(
-                this.storageKey
-            );
-
-            return false;
+            console.error("Saved workflow could not be loaded:", error);
+            // Do not delete the only copy or let app.js auto-save a starter
+            // workflow over it. Leave the corrupt JSON available for recovery.
+            clearTimeout(this.saveTimer);
+            this.saveTimer = null;
+            this.showMessageDialog({
+                title: "Saved Workflow Could Not Load",
+                message: "Your saved workflow was left untouched. Import a valid workflow or recover the saved JSON from browser storage before making changes.",
+                tone: "error"
+            });
+            return true; // suppress starter-data creation in app.js
         }
     }
 
@@ -17189,6 +17224,12 @@ class Board {
         this.connections.push(
             connection
         );
+        for (const endpoint of [sourceWidget, targetWidget]) {
+            if (!this.connectionsByWidget.has(endpoint.id)) {
+                this.connectionsByWidget.set(endpoint.id, new Set());
+            }
+            this.connectionsByWidget.get(endpoint.id).add(connection);
+        }
 
         if (
             typeof targetWidget.markStale ===
@@ -17278,21 +17319,10 @@ class Board {
         this.connectionCancelHandler = null;
     }
 
-    updateConnectionsForWidget(
-        widget
-    ) {
-        this.connections.forEach(
-            (connection) => {
-                if (
-                    connection.sourceWidget ===
-                        widget ||
-                    connection.targetWidget ===
-                        widget
-                ) {
-                    connection.update();
-                }
-            }
-        );
+    updateConnectionsForWidget(widget) {
+        for (const connection of this.connectionsByWidget.get(widget.id) || []) {
+            connection.update();
+        }
     }
 
     removeConnection(
@@ -17341,6 +17371,13 @@ class Board {
             connectionIndex,
             1
         );
+        for (const endpoint of [connection.sourceWidget, connection.targetWidget]) {
+            const set = this.connectionsByWidget.get(endpoint.id);
+            if (set) {
+                set.delete(connection);
+                if (set.size === 0) this.connectionsByWidget.delete(endpoint.id);
+            }
+        }
 
         this.branchConnectionStates.delete(
             connection.id
@@ -17403,16 +17440,7 @@ class Board {
         widget
     ) {
         const connectionsToRemove =
-            this.connections.filter(
-                (connection) => {
-                    return (
-                        connection.sourceWidget ===
-                            widget ||
-                        connection.targetWidget ===
-                            widget
-                    );
-                }
-            );
+            Array.from(this.connectionsByWidget.get(widget.id) || []);
 
         connectionsToRemove.forEach(
             (connection) => {
@@ -17432,6 +17460,7 @@ class Board {
         );
 
         this.connections = [];
+        this.connectionsByWidget.clear();
 
         this.branchConnectionStates.clear();
         this.hasBranchExecutionState = false;
