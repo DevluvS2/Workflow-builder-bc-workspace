@@ -143,6 +143,15 @@ class Board {
             errors: [],
             warnings: []
         };
+        // Batch 7D persistent PHP job state. The job ID is stored separately
+        // from workflow JSON so a browser refresh can reconnect without
+        // pretending browser-side execution continued.
+        this.serverJobStorageKey = "workflowBuilderActiveServerJobV1";
+        this.activeServerRunId = null;
+        this.activeServerRunMeta = null;
+        this.serverRequestPending = false;
+        this.serverCancelRequested = false;
+        this.lastServerProgressKey = "";
 
         /*
          * Research reproducibility state.
@@ -222,6 +231,11 @@ class Board {
         window.addEventListener("pagehide", () => {
             if (this.isWorkflowRunning) this.saveState();
         });
+
+        window.setTimeout(
+            () => this.resumeActiveServerJob(),
+            150
+        );
 
         window.setTimeout(
             () => this.maybeStartFirstRunTutorial(),
@@ -9901,7 +9915,7 @@ class Board {
                 "Ctrl+Enter — Run full workflow\n" +
                 "Ctrl+Shift+Enter — Run selected widget(s)\n" +
                 "Ctrl+Alt+Enter — Run from selected node\n" +
-                "Ctrl+. — Pause / resume local legacy runs only (PHP jobs not yet supported)\n" +
+                "Ctrl+. — Pause/resume is unavailable for PHP background jobs; Stop cancels the server job\n" +
                 "Ctrl+` — Toggle execution console\n" +
                 "Delete — Delete selected widget/connection\n" +
                 "Escape — Deselect / close peek state\n" +
@@ -10016,7 +10030,7 @@ class Board {
     }
 
     pauseWorkflowRun() {
-        if (this.serverRequestPending) return;
+        if (this.serverRequestPending || this.activeServerRunId) return;
         if (
             !this.isWorkflowRunning ||
             this.isWorkflowPaused
@@ -10059,7 +10073,7 @@ class Board {
     }
 
     toggleWorkflowPause() {
-        if (this.serverRequestPending) return;
+        if (this.serverRequestPending || this.activeServerRunId) return;
         if (!this.isWorkflowRunning) {
             return;
         }
@@ -10130,7 +10144,7 @@ class Board {
 
         if (this.pauseWorkflowMenuItem) {
             this.pauseWorkflowMenuItem.disabled =
-                !running || Boolean(this.serverRequestPending);
+                !running || Boolean(this.serverRequestPending) || Boolean(this.activeServerRunId);
 
             const pauseMenuLabel =
                 this.pauseWorkflowMenuItem.querySelector(
@@ -10187,7 +10201,7 @@ class Board {
 
         if (this.pauseToolbarButton) {
             this.pauseToolbarButton.disabled =
-                !running || Boolean(this.serverRequestPending);
+                !running || Boolean(this.serverRequestPending) || Boolean(this.activeServerRunId);
             this.pauseToolbarButton.title =
                 this.isWorkflowPaused
                     ? "Resume Run (Ctrl+.)"
@@ -11481,8 +11495,14 @@ class Board {
     }
 
     async resetWorkflowState() {
-        if (this.serverRequestPending) {
-            await this.showMessageDialog({title: "PHP Request in Progress", message: "Wait for the synchronous PHP request to finish before resetting. Cancellation will be implemented with server jobs.", tone: "info"});
+        if (this.activeServerRunId || this.serverRequestPending) {
+            await this.showMessageDialog({
+                title: "Server Run in Progress",
+                message: this.activeServerRunId
+                    ? "Stop the active server run before resetting workflow state."
+                    : "Wait for the server request to finish before resetting workflow state.",
+                tone: "info"
+            });
             return;
         }
         const hasExecutionResults =
@@ -11576,7 +11596,11 @@ class Board {
     }
 
     stopWorkflowRun() {
-        if (this.serverRequestPending) return; // Batch 7C synchronous PHP requests cannot be cancelled mid-request.
+        if (this.activeServerRunId) {
+            void this.cancelActiveServerRun();
+            return;
+        }
+        if (this.serverRequestPending) return;
         if (!this.isWorkflowRunning) return;
 
         const checkpoint = this.executionCheckpoint;
@@ -12240,6 +12264,292 @@ class Board {
         );
     }
 
+    getServerRunSignature() {
+        const text = JSON.stringify(this.getReproducibleWorkflowData());
+        let hash = 2166136261;
+        for (let index = 0; index < text.length; index++) {
+            hash ^= text.charCodeAt(index);
+            hash = Math.imul(hash, 16777619);
+        }
+        return `${text.length}:${(hash >>> 0).toString(16)}`;
+    }
+
+    persistActiveServerJob(meta) {
+        try {
+            localStorage.setItem(this.serverJobStorageKey, JSON.stringify(meta));
+            return true;
+        } catch (error) {
+            console.error("Could not persist active server job:", error);
+            return false;
+        }
+    }
+
+    readActiveServerJob() {
+        try {
+            const raw = localStorage.getItem(this.serverJobStorageKey);
+            if (!raw) return null;
+            const meta = JSON.parse(raw);
+            if (!meta || typeof meta !== "object" || typeof meta.jobId !== "string") return null;
+            return meta;
+        } catch (error) {
+            console.error("Could not read active server job:", error);
+            return null;
+        }
+    }
+
+    clearActiveServerJob() {
+        this.activeServerRunId = null;
+        this.activeServerRunMeta = null;
+        this.serverCancelRequested = false;
+        this.lastServerProgressKey = "";
+        try {
+            localStorage.removeItem(this.serverJobStorageKey);
+        } catch (error) {
+            console.error("Could not clear active server job metadata:", error);
+        }
+    }
+
+    waitForServerPoll(milliseconds = 250) {
+        return new Promise(resolve => setTimeout(resolve, milliseconds));
+    }
+
+    async resumeActiveServerJob() {
+        if (this.activeServerRunId || this.isWorkflowRunning || typeof executionClient === "undefined") return;
+        const meta = this.readActiveServerJob();
+        if (!meta) return;
+
+        try {
+            const job = await executionClient.getRun(meta.jobId);
+            this.activeServerRunId = meta.jobId;
+            this.activeServerRunMeta = meta;
+            this.isWorkflowRunning = !["finished", "failed", "cancelled"].includes(job.status);
+            this.setExecutionConsoleOpen(true);
+            this.appendExecutionLog(
+                "info",
+                "Reconnected to server run.",
+                `Run ${meta.jobId.slice(0, 8)}… continued on the PHP worker while the page was unavailable.`
+            );
+            this.updateRunControls();
+            await this.monitorServerRun(meta.jobId, meta, job);
+        } catch (error) {
+            if (error.code === "RUN_NOT_FOUND" || error.httpStatus === 404) {
+                this.clearActiveServerJob();
+                this.appendExecutionLog("warning", "Previous server run expired.", "Its local job record is no longer available.", {open: true});
+                return;
+            }
+            console.error("Could not reconnect to server run:", error);
+        }
+    }
+
+    async cancelActiveServerRun() {
+        if (!this.activeServerRunId || this.serverRequestPending) return;
+        const jobId = this.activeServerRunId;
+        this.serverRequestPending = true;
+        this.serverCancelRequested = true;
+        this.appendExecutionLog("warning", "Stopping server run…", "Cancellation was sent to the PHP worker. The active script process will be terminated.", {open: true});
+        this.updateRunControls();
+        try {
+            await executionClient.cancelRun(jobId);
+        } catch (error) {
+            this.serverCancelRequested = false;
+            this.appendExecutionLog("error", "Could not request cancellation.", error.message, {open: true});
+            await this.showMessageDialog({title: "Stop Failed", message: error.message, tone: "warning", confirmLabel: "Close"});
+        } finally {
+            this.serverRequestPending = false;
+            this.updateRunControls();
+        }
+    }
+
+    reportServerJobProgress(job) {
+        const progress = job?.progress || {};
+        const key = `${job.status}|${progress.currentWidgetId || ""}|${progress.completedCount || 0}|${progress.totalNodes || 0}|${job.cancelRequested ? 1 : 0}`;
+        if (key === this.lastServerProgressKey) return;
+        this.lastServerProgressKey = key;
+        const current = progress.currentWidgetId
+            ? this.widgets.find(item => item.id === progress.currentWidgetId)
+            : null;
+        const total = Number(progress.totalNodes) || 0;
+        const completed = Number(progress.completedCount) || 0;
+        if (job.status === "queued") {
+            this.setExecutionConsoleStatus("running");
+        } else if (job.status === "running") {
+            this.setExecutionConsoleStatus("running");
+            if (current) {
+                this.appendExecutionLog("info", `Server executing ${current.title}.`, total ? `${completed}/${total} node(s) completed.` : "Execution plan is being prepared.");
+            }
+        }
+    }
+
+    applyServerNodes(nodes, runId) {
+        const lookup = new Map(this.widgets.map(item => [item.id, item]));
+        const applied = [];
+        for (const result of nodes || []) {
+            const item = lookup.get(result.widgetId);
+            if (!item || !Array.isArray(result.inputs) || !Array.isArray(result.outputs)) {
+                throw new Error("PHP returned an unknown or malformed widget result.");
+            }
+            if (result.inputs.some(port => !item.inputs.some(existing => existing.id === port.id)) ||
+                result.outputs.some(port => !item.outputs.some(existing => existing.id === port.id))) {
+                throw new Error("PHP returned an unknown port ID.");
+            }
+            result.inputs.forEach(port => {
+                const input = item.inputs.find(existing => existing.id === port.id);
+                input.value = port.value;
+            });
+            result.outputs.forEach(port => {
+                const output = item.outputs.find(existing => existing.id === port.id);
+                output.value = port.value;
+            });
+            item.lastDecisionResult = null;
+            if (typeof item.markRunFresh === "function") item.markRunFresh();
+            const runtime = Number(result.metrics?.wallTimeMs) || 0;
+            const memoryBytes = Number(result.metrics?.memoryBytes);
+            const memoryKb = Number.isFinite(memoryBytes) && memoryBytes >= 0 ? memoryBytes / 1024 : 0;
+            item.setStatus("finished", runtime, memoryKb, "");
+            item.refreshContent();
+            const stdout = typeof result.logs?.stdout === "string" ? result.logs.stdout.trim() : "";
+            const stderr = typeof result.logs?.stderr === "string" ? result.logs.stderr.trim() : "";
+            if (stdout) this.appendExecutionLog("info", `${item.title} stdout`, stdout.slice(0, 6000));
+            if (stderr) this.appendExecutionLog("warning", `${item.title} stderr`, stderr.slice(0, 6000));
+            applied.push(item);
+        }
+
+        for (const connection of this.connections) {
+            if (!applied.includes(connection.sourceWidget)) continue;
+            const source = connection.sourceWidget.outputs.find(port => port.id === connection.sourcePortId);
+            if (!source) continue;
+            connection.lastValue = source.value;
+            connection.lastUpdatedAt = new Date().toISOString();
+            connection.lastRunId = runId;
+        }
+        return applied;
+    }
+
+    applyFinishedServerRun(response, meta) {
+        if (!response || response.ok !== true || !Array.isArray(response.nodes) || !Array.isArray(response.executionOrder)) {
+            throw new Error("PHP returned an invalid workflow response.");
+        }
+        const lookup = new Map(this.widgets.map(item => [item.id, item]));
+        const order = response.executionOrder.map(id => lookup.get(id));
+        if (order.some(item => !item) || response.nodes.length !== order.length) {
+            throw new Error("PHP returned unknown or incomplete widget results.");
+        }
+        for (let index = 0; index < order.length; index++) {
+            if (response.nodes[index].widgetId !== order[index].id || response.nodes[index].status !== "finished") {
+                throw new Error("PHP returned mismatched widget results.");
+            }
+        }
+
+        const runId = ++this.executionRunId;
+        const selectedIds = Array.isArray(meta.selectedWidgetIds) ? meta.selectedWidgetIds : [];
+        const selectedWidget = selectedIds.length === 1 ? lookup.get(selectedIds[0]) || null : null;
+        const plan = {
+            mode: meta.mode || response.executionMode || "workflow",
+            order,
+            label: (meta.mode || response.executionMode) === "workflow" ? "full workflow" : `${order.length} selected/downstream widgets`
+        };
+        const record = this.createResearchRunRecord({runId, plan, widget: selectedWidget, report: {warnings: []}, executionOrder: order});
+        this.clearBranchExecutionState({clearDecisionResults: true});
+        this.applyServerNodes(response.nodes, runId);
+
+        this.lastRunRuntimeMs = Number(response.metrics?.wallTimeMs) || 0;
+        const maxNodeMemoryBytes = Number(response.metrics?.maxNodeMemoryBytes);
+        this.lastRunMemoryKb = Number.isFinite(maxNodeMemoryBytes) && maxNodeMemoryBytes >= 0 ? maxNodeMemoryBytes / 1024 : 0;
+        this.finalizeResearchRunRecord(record, order, {status: "finished", runtimeMs: this.lastRunRuntimeMs, memoryKb: this.lastRunMemoryKb});
+        this.setExecutionConsoleStatus("finished");
+        const memorySummary = this.lastRunMemoryKb > 0
+            ? ` · max measured node memory ${this.lastRunMemoryKb.toFixed(1)} KB`
+            : " · node memory unavailable for one or more runtimes";
+        this.appendExecutionLog(
+            "success",
+            "PHP background run finished.",
+            `${order.length} widgets · ${this.lastRunRuntimeMs.toFixed(2)} ms wall time${memorySummary} · ${Number(response.scriptNodeCount) || 0} script node(s).${response.usesCachedInputs ? " Reused saved upstream outputs." : ""}`
+        );
+        this.updateStats();
+        this.updateWorkflowMap();
+        this.saveState();
+        if (this.selectedWidgets.size > 1) this.showMultiSelectionProperties();
+        else if (this.selectedWidget) this.showWidgetProperties(this.selectedWidget);
+        return response;
+    }
+
+    applyCancelledServerRun(job, meta) {
+        const signatureMatches = this.getServerRunSignature() === meta.workflowSignature;
+        const runId = ++this.executionRunId;
+        let applied = [];
+        if (signatureMatches && Array.isArray(job.partialNodes) && job.partialNodes.length) {
+            applied = this.applyServerNodes(job.partialNodes, runId);
+        }
+        const orderIds = Array.isArray(job.progress?.executionOrder) ? job.progress.executionOrder : [];
+        const order = orderIds.map(id => this.widgets.find(item => item.id === id)).filter(Boolean);
+        const completedIds = new Set(applied.map(item => item.id));
+        order.forEach(item => {
+            if (!completedIds.has(item.id)) item.setStatus("stopped", item.runtimeMs, item.memoryKb, "Stopped by user.");
+            item.refreshContent();
+        });
+        this.lastRunRuntimeMs = applied.reduce((sum, item) => sum + (Number(item.runtimeMs) || 0), 0);
+        this.lastRunMemoryKb = applied.reduce((max, item) => Math.max(max, Number(item.memoryKb) || 0), 0);
+        this.setExecutionConsoleStatus("stopped");
+        this.appendExecutionLog(
+            "warning",
+            "Server run stopped.",
+            signatureMatches
+                ? `${applied.length} completed node result(s) were retained; unfinished nodes were marked stopped.`
+                : "The workflow changed while the job was running, so partial server results were not applied.",
+            {open: true}
+        );
+        this.updateStats();
+        this.updateWorkflowMap();
+        this.saveState();
+    }
+
+    async monitorServerRun(jobId, meta, initialJob = null) {
+        let job = initialJob;
+        try {
+            while (this.activeServerRunId === jobId) {
+                if (!job) job = await executionClient.getRun(jobId);
+                this.reportServerJobProgress(job);
+                if (job.status === "finished") {
+                    if (this.getServerRunSignature() !== meta.workflowSignature) {
+                        throw new Error("The workflow changed while the server job was running. Results were discarded; run it again.");
+                    }
+                    return this.applyFinishedServerRun(job.result, meta);
+                }
+                if (job.status === "cancelled") {
+                    this.applyCancelledServerRun(job, meta);
+                    return null;
+                }
+                if (job.status === "failed") {
+                    const details = job.error || {};
+                    const error = new Error(details.message || "The PHP background run failed.");
+                    error.code = details.code || "RUN_FAILED";
+                    error.details = details;
+                    throw error;
+                }
+                await this.waitForServerPoll(250);
+                job = null;
+            }
+            return null;
+        } catch (error) {
+            this.setExecutionConsoleStatus("error");
+            const stderr = typeof error.details?.stderr === "string" ? error.details.stderr.trim() : "";
+            this.appendExecutionLog("error", "PHP background run not completed.", stderr ? `${error.message}\n${stderr.slice(0, 6000)}` : error.message, {open: true});
+            await this.showMessageDialog({
+                title: "Server Run Failed",
+                message: `${error.message}\n\nYour workflow values were not changed unless completed results had already been applied after a cancellation. Check the Execution Console for details.`,
+                tone: "warning",
+                confirmLabel: "Close"
+            });
+            return null;
+        } finally {
+            if (this.activeServerRunId === jobId) this.clearActiveServerJob();
+            this.isWorkflowRunning = false;
+            this.serverRequestPending = false;
+            this.updateRunControls();
+            this.updateStats();
+        }
+    }
+
     async runControlledPHPWorkflow({mode = "workflow", widget = null, widgets = null} = {}) {
         if (this.isWorkflowRunning) return;
         const selected = mode === "multi-selected"
@@ -12249,137 +12559,52 @@ class Board {
             await this.showMessageDialog({title: "Select a Widget", message: "Select a widget before running this mode.", tone: "info"});
             return;
         }
+        if (typeof executionClient === "undefined") {
+            await this.showMessageDialog({title: "PHP Backend Required", message: "Open this project through the PHP server at http://127.0.0.1:8000.", tone: "warning"});
+            return;
+        }
 
-        const requestSnapshot = JSON.stringify(this.getReproducibleWorkflowData());
         const workflow = this.getWorkflowData();
         const execution = {mode, selectedWidgetIds: selected.map(item => item.id)};
+        const meta = {
+            jobId: null,
+            workflowSignature: this.getServerRunSignature(),
+            mode,
+            selectedWidgetIds: execution.selectedWidgetIds,
+            startedAt: new Date().toISOString()
+        };
         this.isWorkflowRunning = true;
         this.serverRequestPending = true;
         this.setExecutionConsoleOpen(true);
         this.setExecutionConsoleStatus("running");
         this.appendExecutionLog(
             "info",
-            "Sending workflow to the PHP execution service.",
-            "Python, JavaScript, and Bash run as short-lived local child processes with timeout/output limits. This Batch 7C runner is for local development and is not a production sandbox."
+            "Submitting workflow to the PHP background worker.",
+            "The server will keep the job record while this page refreshes. Stop now sends a real cancellation request. Local Python, JavaScript, and Bash execution is still not a production sandbox."
         );
         this.updateRunControls();
 
         try {
-            const response = await executionClient.executeWorkflow(workflow, execution);
-            if (JSON.stringify(this.getReproducibleWorkflowData()) !== requestSnapshot) {
-                throw new Error("The workflow changed during the PHP request. Results were discarded; run it again.");
-            }
-            if (!response || response.ok !== true || !Array.isArray(response.nodes) || !Array.isArray(response.executionOrder)) {
-                throw new Error("PHP returned an invalid workflow response.");
-            }
-
-            const lookup = new Map(this.widgets.map(item => [item.id, item]));
-            const order = response.executionOrder.map(id => lookup.get(id));
-            if (order.some(item => !item) || response.nodes.length !== order.length) {
-                throw new Error("PHP returned unknown or incomplete widget results.");
-            }
-            for (let i = 0; i < order.length; i++) {
-                const node = response.nodes[i];
-                if (node.widgetId !== order[i].id || !Array.isArray(node.inputs) || !Array.isArray(node.outputs) || node.status !== "finished") {
-                    throw new Error("PHP returned mismatched widget results.");
-                }
-                if (node.inputs.some(port => !order[i].inputs.some(existing => existing.id === port.id)) ||
-                    node.outputs.some(port => !order[i].outputs.some(existing => existing.id === port.id))) {
-                    throw new Error("PHP returned an unknown port ID.");
-                }
-            }
-
-            const plan = {mode, order, label: mode === "workflow" ? "full workflow" : `${order.length} selected/downstream widgets`};
-            const runId = ++this.executionRunId;
-            const record = this.createResearchRunRecord({runId, plan, widget, report: {warnings: []}, executionOrder: order});
-            this.clearBranchExecutionState({clearDecisionResults: true});
-
-            for (let i = 0; i < order.length; i++) {
-                const item = order[i], result = response.nodes[i];
-                result.inputs.forEach(port => {
-                    const input = item.inputs.find(existing => existing.id === port.id);
-                    input.value = port.value;
-                });
-                result.outputs.forEach(port => {
-                    const output = item.outputs.find(existing => existing.id === port.id);
-                    output.value = port.value;
-                });
-
-                item.lastDecisionResult = null;
-                if (typeof item.markRunFresh === "function") item.markRunFresh();
-                const runtime = Number(result.metrics?.wallTimeMs) || 0;
-                const memoryBytes = Number(result.metrics?.memoryBytes);
-                const memoryKb = Number.isFinite(memoryBytes) && memoryBytes >= 0 ? memoryBytes / 1024 : 0;
-                item.setStatus("finished", runtime, memoryKb, "");
-                item.refreshContent();
-
-                const stdout = typeof result.logs?.stdout === "string" ? result.logs.stdout.trim() : "";
-                const stderr = typeof result.logs?.stderr === "string" ? result.logs.stderr.trim() : "";
-                if (stdout) {
-                    this.appendExecutionLog("info", `${item.title} stdout`, stdout.slice(0, 6000));
-                }
-                if (stderr) {
-                    this.appendExecutionLog("warning", `${item.title} stderr`, stderr.slice(0, 6000));
-                }
-            }
-
-            for (const connection of this.connections) {
-                if (!order.includes(connection.sourceWidget)) continue;
-                const source = connection.sourceWidget.outputs.find(port => port.id === connection.sourcePortId);
-                if (!source) continue;
-                connection.lastValue = source.value;
-                connection.lastUpdatedAt = new Date().toISOString();
-                connection.lastRunId = runId;
-            }
-
-            this.lastRunRuntimeMs = Number(response.metrics?.wallTimeMs) || 0;
-            const maxNodeMemoryBytes = Number(response.metrics?.maxNodeMemoryBytes);
-            this.lastRunMemoryKb = Number.isFinite(maxNodeMemoryBytes) && maxNodeMemoryBytes >= 0
-                ? maxNodeMemoryBytes / 1024
-                : 0;
-            this.finalizeResearchRunRecord(record, order, {
-                status: "finished",
-                runtimeMs: this.lastRunRuntimeMs,
-                memoryKb: this.lastRunMemoryKb
-            });
-            this.setExecutionConsoleStatus("finished");
-
-            const memorySummary = this.lastRunMemoryKb > 0
-                ? ` · max measured node memory ${this.lastRunMemoryKb.toFixed(1)} KB`
-                : " · node memory unavailable for one or more runtimes";
-            this.appendExecutionLog(
-                "success",
-                "PHP workflow run finished.",
-                `${order.length} widgets · ${this.lastRunRuntimeMs.toFixed(2)} ms wall time${memorySummary} · ${Number(response.scriptNodeCount) || 0} script node(s).${response.usesCachedInputs ? " Reused saved upstream outputs." : ""}`
-            );
-
-            this.updateStats();
-            this.updateWorkflowMap();
-            this.saveState();
-            if (this.selectedWidgets.size > 1) this.showMultiSelectionProperties();
-            else if (this.selectedWidget) this.showWidgetProperties(this.selectedWidget);
-            return response;
-        } catch (error) {
-            this.setExecutionConsoleStatus("error");
-            const stderr = typeof error.details?.stderr === "string" ? error.details.stderr.trim() : "";
-            this.appendExecutionLog(
-                "error",
-                "PHP run not completed.",
-                stderr ? `${error.message}\n${stderr.slice(0, 6000)}` : error.message,
-                {open: true}
-            );
-            await this.showMessageDialog({
-                title: "Server Run Failed",
-                message: `${error.message}\n\nYour workflow values were not changed. Check the Execution Console for script output.`,
-                tone: "warning",
-                confirmLabel: "Close"
-            });
-            return null;
-        } finally {
-            this.isWorkflowRunning = false;
+            const accepted = await executionClient.createRun(workflow, execution);
+            if (!accepted?.jobId) throw new Error("PHP did not return a background job ID.");
+            meta.jobId = accepted.jobId;
+            this.activeServerRunId = accepted.jobId;
+            this.activeServerRunMeta = meta;
             this.serverRequestPending = false;
+            this.persistActiveServerJob(meta);
+            this.appendExecutionLog("info", "Server run queued.", `Run ${accepted.jobId.slice(0, 8)}… can be reconnected after a browser refresh.`);
             this.updateRunControls();
-            this.updateStats();
+            return await this.monitorServerRun(accepted.jobId, meta);
+        } catch (error) {
+            if (!this.activeServerRunId) {
+                this.isWorkflowRunning = false;
+                this.serverRequestPending = false;
+                this.setExecutionConsoleStatus("error");
+                this.appendExecutionLog("error", "Could not start PHP background run.", error.message, {open: true});
+                await this.showMessageDialog({title: "Server Run Failed", message: error.message, tone: "warning", confirmLabel: "Close"});
+                this.updateRunControls();
+            }
+            return null;
         }
     }
 
@@ -12391,7 +12616,7 @@ class Board {
             widgets = null
         } = {}
     ) {
-        // Batch 7C: all normal Run actions use the PHP API. Even when the
+        // Batch 7D: all normal Run actions use persistent PHP jobs. Even when the
         // client script is missing or the server is offline, NEVER fall back
         // to the legacy browser evaluator retained temporarily below.
         if (typeof executionClient === "undefined") {

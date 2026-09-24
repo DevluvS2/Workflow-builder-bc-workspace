@@ -4,15 +4,17 @@ declare(strict_types=1);
 require_once __DIR__ . '/ScriptRunner.php';
 
 /**
- * Batch 7C synchronous workflow engine.
+ * Batch 7D workflow engine used by synchronous compatibility calls and background jobs.
  *
  * Pass-through/sum execute inside PHP. Python, JavaScript and Bash execute in
- * short-lived LOCAL DEVELOPMENT child processes through ScriptRunner.
- * ScriptRunner is not a production security sandbox.
+ * short-lived LOCAL DEVELOPMENT child processes through ScriptRunner. Background
+ * jobs add persistence/cancellation, but ScriptRunner is still not a production security sandbox.
  */
+final class WorkflowCancelledException extends RuntimeException {}
+
 final class WorkflowRunner
 {
-    public static function execute(array $workflow, array $options = []): array
+    public static function execute(array $workflow, array $options = [], array $hooks = []): array
     {
         $started = hrtime(true);
         $widgets = $workflow['widgets'];
@@ -39,8 +41,20 @@ final class WorkflowRunner
         if ($chosen === []) throw new DomainException('The workflow has no widgets to execute.');
         [$order, $incoming] = self::executionOrder($widgets, $edges, $chosen);
 
+        $shouldCancel = isset($hooks['shouldCancel']) && is_callable($hooks['shouldCancel'])
+            ? $hooks['shouldCancel']
+            : static fn(): bool => false;
+        $onPlan = isset($hooks['onPlan']) && is_callable($hooks['onPlan']) ? $hooks['onPlan'] : null;
+        $onNodeStarted = isset($hooks['onNodeStarted']) && is_callable($hooks['onNodeStarted']) ? $hooks['onNodeStarted'] : null;
+        $onNodeFinished = isset($hooks['onNodeFinished']) && is_callable($hooks['onNodeFinished']) ? $hooks['onNodeFinished'] : null;
+        if ($shouldCancel()) throw new WorkflowCancelledException('Workflow run cancelled.');
+        if ($onPlan) $onPlan($order);
+
         // Reject the whole request before starting any user process.
-        foreach ($order as $id) self::preflightNode($byId[$id]);
+        foreach ($order as $id) {
+            if ($shouldCancel()) throw new WorkflowCancelledException('Workflow run cancelled.');
+            self::preflightNode($byId[$id]);
+        }
 
         $resolvedOutputs = [];
         $nodes = [];
@@ -49,6 +63,8 @@ final class WorkflowRunner
         $scriptNodeCount = 0;
 
         foreach ($order as $id) {
+            if ($shouldCancel()) throw new WorkflowCancelledException('Workflow run cancelled.');
+            if ($onNodeStarted) $onNodeStarted($id);
             $nodeStarted = hrtime(true);
             $nodeMemoryStart = memory_get_usage(true);
             $node = $byId[$id];
@@ -126,8 +142,9 @@ final class WorkflowRunner
             } elseif (in_array($language, ['Python', 'JavaScript', 'Bash'], true)) {
                 $scriptNodeCount++;
                 try {
-                    $script = ScriptRunner::run($language, (string)($node['source'] ?? ''), $inputs);
+                    $script = ScriptRunner::run($language, (string)($node['source'] ?? ''), $inputs, ['shouldCancel' => $shouldCancel]);
                 } catch (ScriptExecutionException $exception) {
+                    if ($exception->cancelled) throw new WorkflowCancelledException('Workflow run cancelled.');
                     throw new ScriptExecutionException(
                         "Widget '$id': " . $exception->getMessage(),
                         $exception->language,
@@ -161,7 +178,7 @@ final class WorkflowRunner
             }
 
             $resolvedOutputs[$id] = $outputs;
-            $nodes[] = [
+            $nodeResult = [
                 'widgetId' => $id,
                 'status' => 'finished',
                 'inputs' => array_map(static fn(array $input) => ['id' => $input['id'], 'value' => $input['value']], $inputs),
@@ -170,6 +187,9 @@ final class WorkflowRunner
                 'logs' => $logs,
                 'runtime' => $runtime,
             ];
+            $nodes[] = $nodeResult;
+            if ($onNodeFinished) $onNodeFinished($id, $nodeResult);
+            if ($shouldCancel()) throw new WorkflowCancelledException('Workflow run cancelled.');
         }
 
         return [

@@ -59,4 +59,18 @@ if ($availability['Python']) {
     }
 }
 
+
+if ($availability['Python']) {
+    $cancelAt = hrtime(true) + 150000000;
+    try {
+        ScriptRunner::run('Python', "import time\ntime.sleep(5)\nresult = 1", [], [
+            'timeoutMs' => 5000,
+            'shouldCancel' => static fn(): bool => hrtime(true) >= $cancelAt,
+        ]);
+        ensureScript(false, 'Python cancellation enforced');
+    } catch (ScriptExecutionException $e) {
+        ensureScript($e->cancelled && !$e->timedOut, 'Python cancellation enforced');
+    }
+}
+
 echo "Script runner unit tests complete.\n";

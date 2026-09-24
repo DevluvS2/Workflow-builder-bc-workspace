@@ -11,14 +11,15 @@ final class ScriptExecutionException extends RuntimeException
         public readonly string $stdout = '',
         public readonly string $stderr = '',
         public readonly ?int $exitCode = null,
-        public readonly bool $timedOut = false
+        public readonly bool $timedOut = false,
+        public readonly bool $cancelled = false
     ) {
         parent::__construct($message);
     }
 }
 
 /**
- * Batch 7C local-development process runner.
+ * Batch 7D local-development process runner with cooperative cancellation.
  *
  * Security boundary: NONE. This limits time/output and removes most inherited
  * environment variables, but it does not isolate filesystem/network/process
@@ -61,6 +62,12 @@ final class ScriptRunner
         if ($executable === null) self::assertRuntimeAvailable($language);
 
         $timeoutMs = (int)($options['timeoutMs'] ?? self::DEFAULT_TIMEOUT_MS);
+        $shouldCancel = isset($options['shouldCancel']) && is_callable($options['shouldCancel'])
+            ? $options['shouldCancel']
+            : static fn(): bool => false;
+        if ($shouldCancel()) {
+            throw new ScriptExecutionException("$language script cancelled before start.", $language, '', '', null, false, true);
+        }
         $timeoutMs = max(100, min(self::MAX_TIMEOUT_MS, $timeoutMs));
         $tempDir = self::makeTempDir();
 
@@ -92,7 +99,18 @@ final class ScriptRunner
                 $env += self::bashInputEnvironment($payload);
             }
 
-            $process = self::runProcess($command, $payloadJson, $tempDir, $env, $timeoutMs);
+            $process = self::runProcess($command, $payloadJson, $tempDir, $env, $timeoutMs, $shouldCancel);
+            if ($process['cancelled']) {
+                throw new ScriptExecutionException(
+                    "$language script cancelled.",
+                    $language,
+                    $process['stdout'],
+                    $process['stderr'],
+                    $process['exitCode'],
+                    false,
+                    true
+                );
+            }
             if ($process['timedOut']) {
                 throw new ScriptExecutionException(
                     "$language script exceeded the {$timeoutMs} ms limit.",
@@ -273,7 +291,7 @@ final class ScriptRunner
         throw new RuntimeException('Could not create a temporary script working directory.');
     }
 
-    private static function runProcess(array $command, string $stdin, string $cwd, array $env, int $timeoutMs): array
+    private static function runProcess(array $command, string $stdin, string $cwd, array $env, int $timeoutMs, callable $shouldCancel): array
     {
         $descriptors = [
             0 => ['pipe', 'r'],
@@ -294,11 +312,17 @@ final class ScriptRunner
         $stderr = '';
         $timedOut = false;
         $outputLimitExceeded = false;
+        $cancelled = false;
         $lastStatus = proc_get_status($process);
 
         while (true) {
             $stdout .= (string)stream_get_contents($pipes[1]);
             $stderr .= (string)stream_get_contents($pipes[2]);
+            if ($shouldCancel()) {
+                $cancelled = true;
+                self::terminateProcess($process, (int)($lastStatus['pid'] ?? 0));
+                break;
+            }
             if (strlen($stdout) > self::MAX_STREAM_BYTES || strlen($stderr) > self::MAX_STREAM_BYTES) {
                 $outputLimitExceeded = true;
                 self::terminateProcess($process, (int)($lastStatus['pid'] ?? 0));
@@ -334,6 +358,7 @@ final class ScriptRunner
             'exitCode' => $exitCode,
             'timedOut' => $timedOut,
             'outputLimitExceeded' => $outputLimitExceeded,
+            'cancelled' => $cancelled,
         ];
     }
 

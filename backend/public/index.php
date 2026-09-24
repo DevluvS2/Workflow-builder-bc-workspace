@@ -5,6 +5,8 @@ require_once dirname(__DIR__) . '/src/WorkflowValidator.php';
 require_once dirname(__DIR__) . '/src/RuntimeLocator.php';
 require_once dirname(__DIR__) . '/src/ScriptRunner.php';
 require_once dirname(__DIR__) . '/src/WorkflowRunner.php';
+require_once dirname(__DIR__) . '/src/JobRepository.php';
+require_once dirname(__DIR__) . '/src/JobLauncher.php';
 
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
@@ -38,6 +40,15 @@ function readJsonBody(): array {
     return $request;
 }
 
+function validateExecutionRequest(array $request): array {
+    $errors = WorkflowValidator::validate($request['workflow'] ?? null);
+    if ($errors !== []) respond(422, ['ok' => false, 'code' => 'INVALID_WORKFLOW', 'errors' => $errors]);
+    if (isset($request['execution']) && (!is_array($request['execution']) || array_is_list($request['execution']))) {
+        respond(422, ['ok' => false, 'code' => 'INVALID_EXECUTION', 'message' => 'execution must be an object.']);
+    }
+    return $request['execution'] ?? [];
+}
+
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
@@ -46,11 +57,13 @@ if ($path === '/api/health' && $method === 'GET') {
         'apiVersion' => 1,
         'status' => 'ok',
         'executionEnabled' => true,
-        'executionScope' => 'local-process-runner',
+        'executionScope' => 'local-background-job-runner',
         'scriptExecutionEnabled' => true,
         'runtimes' => ScriptRunner::runtimeAvailability(),
-        'persistentJobsEnabled' => false,
-        'warning' => 'Batch 7C uses local child processes with limits; it is not a production sandbox.'
+        'persistentJobsEnabled' => true,
+        'jobCancellationEnabled' => true,
+        'jobStorage' => 'local-file-store',
+        'warning' => 'Batch 7D uses local child processes and file-backed jobs. It is for local development and is not a production sandbox.'
     ]);
 }
 
@@ -62,7 +75,7 @@ if ($path === '/api/validate' && $method === 'POST') {
         'ok' => true,
         'status' => 'validated_only',
         'executionEnabled' => true,
-        'executionScope' => 'local-process-runner',
+        'executionScope' => 'local-background-job-runner',
         'scriptExecutionEnabled' => true,
         'runtimes' => ScriptRunner::runtimeAvailability(),
         'widgetCount' => count($request['workflow']['widgets']),
@@ -73,14 +86,9 @@ if ($path === '/api/validate' && $method === 'POST') {
 
 if ($path === '/api/execute' && $method === 'POST') {
     $request = readJsonBody();
-    $errors = WorkflowValidator::validate($request['workflow'] ?? null);
-    if ($errors !== []) respond(422, ['ok' => false, 'code' => 'INVALID_WORKFLOW', 'errors' => $errors]);
-    if (isset($request['execution']) && (!is_array($request['execution']) || array_is_list($request['execution']))) {
-        respond(422, ['ok' => false, 'code' => 'INVALID_EXECUTION', 'message' => 'execution must be an object.']);
-    }
-
+    $execution = validateExecutionRequest($request);
     try {
-        respond(200, WorkflowRunner::execute($request['workflow'], $request['execution'] ?? []));
+        respond(200, WorkflowRunner::execute($request['workflow'], $execution));
     } catch (ScriptExecutionException $exception) {
         respond(422, [
             'ok' => false,
@@ -89,9 +97,12 @@ if ($path === '/api/execute' && $method === 'POST') {
             'message' => $exception->getMessage(),
             'exitCode' => $exception->exitCode,
             'timedOut' => $exception->timedOut,
+            'cancelled' => $exception->cancelled,
             'stdout' => substr($exception->stdout, 0, 4000),
             'stderr' => substr($exception->stderr, 0, 4000),
         ]);
+    } catch (WorkflowCancelledException $exception) {
+        respond(409, ['ok' => false, 'code' => 'RUN_CANCELLED', 'message' => $exception->getMessage()]);
     } catch (DomainException $exception) {
         respond(422, ['ok' => false, 'code' => 'UNSUPPORTED_OR_INVALID_EXECUTION', 'message' => $exception->getMessage()]);
     } catch (RuntimeException $exception) {
@@ -99,16 +110,57 @@ if ($path === '/api/execute' && $method === 'POST') {
     }
 }
 
-if ($path === '/api/execute') {
-    respond(405, ['ok' => false, 'code' => 'METHOD_NOT_ALLOWED', 'message' => 'Use POST.']);
+if ($path === '/api/execute') respond(405, ['ok' => false, 'code' => 'METHOD_NOT_ALLOWED', 'message' => 'Use POST.']);
+
+if ($path === '/api/runs' && $method === 'POST') {
+    $request = readJsonBody();
+    $execution = validateExecutionRequest($request);
+    try {
+        $job = JobRepository::create($request['workflow'], $execution);
+        try {
+            JobLauncher::launch($job['jobId']);
+        } catch (Throwable $exception) {
+            JobRepository::markLaunchFailure($job['jobId'], $exception->getMessage());
+            respond(500, ['ok' => false, 'code' => 'WORKER_LAUNCH_FAILED', 'message' => 'The local background worker could not be launched.']);
+        }
+        respond(202, [
+            'ok' => true,
+            'jobId' => $job['jobId'],
+            'status' => 'queued',
+            'pollAfterMs' => 250,
+            'message' => 'Run accepted by the local background worker.'
+        ]);
+    } catch (RuntimeException $exception) {
+        respond(500, ['ok' => false, 'code' => 'JOB_STORAGE_FAILURE', 'message' => 'The local job store could not create this run.']);
+    }
 }
 
-if ($path === '/api/runs') {
-    respond(501, [
-        'ok' => false,
-        'code' => 'PERSISTENT_JOBS_NOT_IMPLEMENTED',
-        'message' => 'Persistent background jobs are not implemented yet. Use POST /api/execute for synchronous local execution.'
-    ]);
+if ($path === '/api/runs') respond(405, ['ok' => false, 'code' => 'METHOD_NOT_ALLOWED', 'message' => 'Use POST to create a run.']);
+
+if (is_string($path) && preg_match('#^/api/runs/([a-f0-9]{32})$#D', $path, $match) === 1) {
+    if ($method !== 'GET') respond(405, ['ok' => false, 'code' => 'METHOD_NOT_ALLOWED', 'message' => 'Use GET.']);
+    try {
+        $job = JobRepository::read($match[1]);
+    } catch (RuntimeException $exception) {
+        respond(500, ['ok' => false, 'code' => 'JOB_STORAGE_FAILURE', 'message' => 'The local job store could not read this run.']);
+    }
+    if ($job === null) respond(404, ['ok' => false, 'code' => 'RUN_NOT_FOUND', 'message' => 'Run not found or expired.']);
+    respond(200, JobRepository::publicView($job));
+}
+
+if (is_string($path) && preg_match('#^/api/runs/([a-f0-9]{32})/cancel$#D', $path, $match) === 1) {
+    if ($method !== 'POST') respond(405, ['ok' => false, 'code' => 'METHOD_NOT_ALLOWED', 'message' => 'Use POST.']);
+    try {
+        $job = JobRepository::requestCancel($match[1]);
+    } catch (RuntimeException $exception) {
+        respond(500, ['ok' => false, 'code' => 'JOB_STORAGE_FAILURE', 'message' => 'The local job store could not update this run.']);
+    }
+    if ($job === null) respond(404, ['ok' => false, 'code' => 'RUN_NOT_FOUND', 'message' => 'Run not found or expired.']);
+    $view = JobRepository::publicView($job);
+    $view['message'] = in_array($job['status'], ['finished', 'failed', 'cancelled'], true)
+        ? 'Run is already in a terminal state.'
+        : 'Cancellation requested.';
+    respond(($job['status'] ?? '') === 'cancelled' ? 200 : 202, $view);
 }
 
 respond(404, ['ok' => false, 'code' => 'NOT_FOUND', 'message' => 'Unknown API endpoint.']);

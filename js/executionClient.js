@@ -1,4 +1,4 @@
-/* Batch 7C: synchronous PHP workflow execution with local Python/Bash/Node child processes. */
+/* Batch 7D: persistent PHP background jobs with polling, refresh reconnect, and cancellation. */
 class ExecutionClient {
     constructor(baseUrl = '') {
         this.baseUrl = baseUrl;
@@ -22,9 +22,30 @@ class ExecutionClient {
             const error = new Error(message);
             error.code = data.code || null;
             error.details = data;
+            error.httpStatus = response.status;
             throw error;
         }
         return data;
+    }
+
+    createRun(workflow, execution = {mode: 'workflow'}) {
+        return this.request('/api/runs', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({apiVersion: 1, workflow, execution})
+        });
+    }
+
+    getRun(jobId) {
+        return this.request(`/api/runs/${encodeURIComponent(jobId)}`);
+    }
+
+    cancelRun(jobId) {
+        return this.request(`/api/runs/${encodeURIComponent(jobId)}/cancel`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({apiVersion: 1})
+        });
     }
 
     executeWorkflow(workflow, execution = {mode: 'workflow'}) {
@@ -35,7 +56,6 @@ class ExecutionClient {
         });
     }
 
-    // Backward-compatible alias for any Batch 7B callers.
     executeControlled(workflow, execution = {mode: 'workflow'}) {
         return this.executeWorkflow(workflow, execution);
     }
