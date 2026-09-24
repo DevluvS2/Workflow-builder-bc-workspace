@@ -6860,7 +6860,7 @@ class Board {
         const scriptSection =
             this.createPropertiesSection(
                 "Script",
-                "Runs in the browser-safe workflow simulator. Bash, Python, and JavaScript syntax is interpreted locally; no operating-system commands are executed."
+                "Batch 7B runs on PHP. Only Pass-through and Sum operations with empty script source are executable. Python, Bash, JavaScript, expressions and decisions require the isolated runner batch."
             );
         scriptSection.section.dataset.tour = "properties-script";
 
@@ -6988,7 +6988,7 @@ class Board {
         const delayLabel =
             document.createElement("label");
         delayLabel.textContent =
-            "Base execution delay (ms)";
+            "Legacy simulation delay (ignored by PHP)";
 
         const delayInput =
             document.createElement("input");
@@ -7033,6 +7033,31 @@ class Board {
 
         delayRow.appendChild(delayLabel);
         delayRow.appendChild(delayInput);
+
+        if (widget.type === "Process") {
+            const operationRow = document.createElement("div");
+            operationRow.className = "property-row";
+            const operationLabel = document.createElement("label");
+            operationLabel.textContent = "PHP built-in operation";
+            const operationSelect = document.createElement("select");
+            [["pass-through", "Pass-through"], ["sum", "Sum numeric inputs"]].forEach(([value, label]) => {
+                const option = document.createElement("option");
+                option.value = value;
+                option.textContent = label;
+                operationSelect.appendChild(option);
+            });
+            operationSelect.value = widget.serverOperation || "pass-through";
+            operationSelect.addEventListener("change", () => {
+                if (widget.serverOperation === operationSelect.value) return;
+                this.recordHistoryState();
+                widget.serverOperation = operationSelect.value;
+                this.showWidgetProperties(widget);
+                this.scheduleSave();
+            });
+            operationRow.appendChild(operationLabel);
+            operationRow.appendChild(operationSelect);
+            scriptSection.body.appendChild(operationRow);
+        }
 
         scriptSection.body.appendChild(
             languageRow
@@ -9876,7 +9901,7 @@ class Board {
                 "Ctrl+Enter — Run full workflow\n" +
                 "Ctrl+Shift+Enter — Run selected widget(s)\n" +
                 "Ctrl+Alt+Enter — Run from selected node\n" +
-                "Ctrl+. — Pause / resume current run\n" +
+                "Ctrl+. — Pause / resume local legacy runs only (PHP jobs not yet supported)\n" +
                 "Ctrl+` — Toggle execution console\n" +
                 "Delete — Delete selected widget/connection\n" +
                 "Escape — Deselect / close peek state\n" +
@@ -9991,6 +10016,7 @@ class Board {
     }
 
     pauseWorkflowRun() {
+        if (this.serverRequestPending) return;
         if (
             !this.isWorkflowRunning ||
             this.isWorkflowPaused
@@ -10033,6 +10059,7 @@ class Board {
     }
 
     toggleWorkflowPause() {
+        if (this.serverRequestPending) return;
         if (!this.isWorkflowRunning) {
             return;
         }
@@ -10103,7 +10130,7 @@ class Board {
 
         if (this.pauseWorkflowMenuItem) {
             this.pauseWorkflowMenuItem.disabled =
-                !running;
+                !running || Boolean(this.serverRequestPending);
 
             const pauseMenuLabel =
                 this.pauseWorkflowMenuItem.querySelector(
@@ -10142,7 +10169,7 @@ class Board {
 
         if (this.stopWorkflowMenuItem) {
             this.stopWorkflowMenuItem.disabled =
-                !running;
+                !running || Boolean(this.serverRequestPending);
         }
 
         if (this.runToolbarButton) {
@@ -10160,7 +10187,7 @@ class Board {
 
         if (this.pauseToolbarButton) {
             this.pauseToolbarButton.disabled =
-                !running;
+                !running || Boolean(this.serverRequestPending);
             this.pauseToolbarButton.title =
                 this.isWorkflowPaused
                     ? "Resume Run (Ctrl+.)"
@@ -10192,7 +10219,7 @@ class Board {
 
         if (this.stopToolbarButton) {
             this.stopToolbarButton.disabled =
-                !running;
+                !running || Boolean(this.serverRequestPending);
         }
     }
 
@@ -11454,6 +11481,10 @@ class Board {
     }
 
     async resetWorkflowState() {
+        if (this.serverRequestPending) {
+            await this.showMessageDialog({title: "PHP Request in Progress", message: "Wait for the synchronous PHP request to finish before resetting. Cancellation will be implemented with server jobs.", tone: "info"});
+            return;
+        }
         const hasExecutionResults =
             this.widgets.some((widget) =>
                 widget.runtimeMs > 0 ||
@@ -11545,6 +11576,7 @@ class Board {
     }
 
     stopWorkflowRun() {
+        if (this.serverRequestPending) return; // Synchronous PHP requests cannot be cancelled in Batch 7B.
         if (!this.isWorkflowRunning) return;
 
         const checkpoint = this.executionCheckpoint;
@@ -12208,6 +12240,102 @@ class Board {
         );
     }
 
+    async runControlledPHPWorkflow({mode = "workflow", widget = null, widgets = null} = {}) {
+        if (this.isWorkflowRunning) return;
+        const selected = mode === "multi-selected"
+            ? [...new Set(widgets || [])].filter(item => this.widgets.includes(item))
+            : widget && this.widgets.includes(widget) ? [widget] : [];
+        if (mode !== "workflow" && selected.length === 0) {
+            await this.showMessageDialog({title: "Select a Widget", message: "Select a widget before running this mode.", tone: "info"});
+            return;
+        }
+        const requestSnapshot = JSON.stringify(this.getReproducibleWorkflowData());
+        const workflow = this.getWorkflowData();
+        const execution = {mode, selectedWidgetIds: selected.map(item => item.id)};
+        this.isWorkflowRunning = true;
+        this.serverRequestPending = true;
+        this.setExecutionConsoleOpen(true);
+        this.setExecutionConsoleStatus("running");
+        this.appendExecutionLog("info", "Sending controlled workflow to PHP.",
+            "Only Pass-through, empty Expression and allowlisted server operations are supported. User scripts and Decision branches are not executed in Batch 7B.");
+        this.updateRunControls();
+        try {
+            const response = await executionClient.executeControlled(workflow, execution);
+            if (JSON.stringify(this.getReproducibleWorkflowData()) !== requestSnapshot) {
+                throw new Error("The workflow changed during the PHP request. Results were discarded; run it again.");
+            }
+            if (!response || response.ok !== true || !Array.isArray(response.nodes) || !Array.isArray(response.executionOrder)) {
+                throw new Error("PHP returned an invalid workflow response.");
+            }
+            const lookup = new Map(this.widgets.map(item => [item.id, item]));
+            const order = response.executionOrder.map(id => lookup.get(id));
+            if (order.some(item => !item) || response.nodes.length !== order.length) {
+                throw new Error("PHP returned unknown or incomplete widget results.");
+            }
+            for (let i = 0; i < order.length; i++) {
+                const node = response.nodes[i];
+                if (node.widgetId !== order[i].id || !Array.isArray(node.inputs) || !Array.isArray(node.outputs) || node.status !== "finished") {
+                    throw new Error("PHP returned mismatched widget results.");
+                }
+                if (node.inputs.some(port => !order[i].inputs.some(existing => existing.id === port.id)) ||
+                    node.outputs.some(port => !order[i].outputs.some(existing => existing.id === port.id))) {
+                    throw new Error("PHP returned an unknown port ID.");
+                }
+            }
+            const plan = {mode, order, label: mode === "workflow" ? "full workflow" : `${order.length} selected/downstream widgets`};
+            const runId = ++this.executionRunId;
+            const record = this.createResearchRunRecord({runId, plan, widget, report: {warnings: []}, executionOrder: order});
+            this.clearBranchExecutionState({clearDecisionResults: true});
+            for (let i = 0; i < order.length; i++) {
+                const item = order[i], result = response.nodes[i];
+                result.inputs.forEach(port => {
+                    const input = item.inputs.find(existing => existing.id === port.id);
+                    input.value = port.value;
+                });
+                result.outputs.forEach(port => {
+                    const output = item.outputs.find(existing => existing.id === port.id);
+                    output.value = port.value;
+                });
+                item.lastDecisionResult = null;
+                if (typeof item.markRunFresh === "function") item.markRunFresh();
+                const runtime = Number(result.metrics?.wallTimeMs) || 0;
+                // Node allocation deltas are PHP bookkeeping metrics, not script peak memory.
+                item.setStatus("finished", runtime, 0, "");
+                item.refreshContent();
+            }
+            for (const connection of this.connections) {
+                if (!order.includes(connection.sourceWidget)) continue;
+                const source = connection.sourceWidget.outputs.find(port => port.id === connection.sourcePortId);
+                if (!source) continue;
+                connection.lastValue = source.value;
+                connection.lastUpdatedAt = new Date().toISOString();
+                connection.lastRunId = runId;
+            }
+            this.lastRunRuntimeMs = Number(response.metrics?.wallTimeMs) || 0;
+            this.lastRunMemoryKb = 0;
+            this.finalizeResearchRunRecord(record, order, {status: "finished", runtimeMs: this.lastRunRuntimeMs, memoryKb: 0});
+            this.setExecutionConsoleStatus("finished");
+            this.appendExecutionLog("success", "PHP workflow run finished.",
+                `${order.length} widgets · ${this.lastRunRuntimeMs.toFixed(2)} ms PHP orchestration wall time · PHP process peak: ${response.metrics?.phpPeakMemoryBytes ?? "unknown"} bytes. No scripts executed.${response.usesCachedInputs ? " Reused saved upstream outputs." : ""}`);
+            this.updateStats();
+            this.updateWorkflowMap();
+            this.saveState();
+            if (this.selectedWidgets.size > 1) this.showMultiSelectionProperties();
+            else if (this.selectedWidget) this.showWidgetProperties(this.selectedWidget);
+            return response;
+        } catch (error) {
+            this.setExecutionConsoleStatus("error");
+            this.appendExecutionLog("error", "PHP run not completed.", error.message, {open: true});
+            await this.showMessageDialog({title: "PHP Run Not Available", message: error.message + "\n\nYour workflow values were not changed. Real Python, Bash, JavaScript, and Decision execution are deferred to the isolated runner batch.", tone: "warning", confirmLabel: "Close"});
+            return null;
+        } finally {
+            this.isWorkflowRunning = false;
+            this.serverRequestPending = false;
+            this.updateRunControls();
+            this.updateStats();
+        }
+    }
+
     async runWorkflow(
         {
             mode = "workflow",
@@ -12215,6 +12343,20 @@ class Board {
             widgets = null
         } = {}
     ) {
+        // Batch 7B: all normal Run actions use the PHP API. Even when the
+        // client script is missing or the server is offline, NEVER fall back
+        // to the legacy browser evaluator left for later migration.
+        if (typeof executionClient === "undefined") {
+            await this.showMessageDialog({
+                title: "PHP Backend Required",
+                message: "Open this project through the PHP server at http://127.0.0.1:8000. Local script execution is disabled.",
+                tone: "warning"
+            });
+            return null;
+        }
+        return this.runControlledPHPWorkflow({mode, widget, widgets});
+        // Legacy simulator retained temporarily below, now unreachable from
+        // Run. It will be removed when the isolated runner replaces it.
         if (this.isWorkflowRunning) {
             return;
         }

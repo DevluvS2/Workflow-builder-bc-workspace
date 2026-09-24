@@ -1,4 +1,4 @@
-/* Batch 7A: API transport only. Existing execution is not redirected until 7B. */
+/* Batch 7B: controlled synchronous PHP execution; scripts are not supported yet. */
 class ExecutionClient {
     constructor(baseUrl = '') {
         this.baseUrl = baseUrl;
@@ -16,6 +16,14 @@ class ExecutionClient {
             throw new Error(message);
         }
         return data;
+    }
+
+    executeControlled(workflow, execution = {mode: 'workflow'}) {
+        return this.request('/api/execute', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({apiVersion: 1, workflow, execution})
+        });
     }
 
     health() {

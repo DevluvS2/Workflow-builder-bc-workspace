@@ -87,6 +87,8 @@ class Widget {
                 : "Expression";
 
         this.source = "";
+        // Explicit allowlisted PHP operation; never source-code evaluation.
+        this.serverOperation = "pass-through";
         this.executionDelayMs = 180;
 
         this.isDragging = false;
@@ -417,6 +419,8 @@ class Widget {
             this.source =
                 String(data.source);
         }
+
+        this.serverOperation = data.serverOperation === "sum" ? "sum" : "pass-through";
 
         if (
             Number.isFinite(
@@ -2239,6 +2243,7 @@ class Widget {
             type: this.type,
             language: this.language,
             source: this.source,
+            serverOperation: this.serverOperation,
             executionDelayMs: this.executionDelayMs,
             decisionExpression: this.decisionExpression,
             decisionTrueOutputId: this.decisionTrueOutputId,
@@ -2373,6 +2378,8 @@ class Widget {
 
             source:
                 this.source,
+
+            serverOperation: this.serverOperation,
 
             decisionExpression:
                 this.decisionExpression,
