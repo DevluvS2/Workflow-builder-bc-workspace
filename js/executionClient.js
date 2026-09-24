@@ -1,4 +1,4 @@
-/* Batch 7B: controlled synchronous PHP execution; scripts are not supported yet. */
+/* Batch 7C: synchronous PHP workflow execution with local Python/Bash/Node child processes. */
 class ExecutionClient {
     constructor(baseUrl = '') {
         this.baseUrl = baseUrl;
@@ -12,18 +12,32 @@ class ExecutionClient {
         });
         const data = await response.json();
         if (!response.ok) {
-            const message = Array.isArray(data.errors) ? data.errors.join(' ') : data.message || `HTTP ${response.status}`;
-            throw new Error(message);
+            let message = Array.isArray(data.errors)
+                ? data.errors.join(' ')
+                : data.message || `HTTP ${response.status}`;
+            if (data.stderr && typeof data.stderr === 'string') {
+                const first = data.stderr.trim().split(/\r?\n/)[0];
+                if (first && !message.includes(first)) message += ` ${first}`;
+            }
+            const error = new Error(message);
+            error.code = data.code || null;
+            error.details = data;
+            throw error;
         }
         return data;
     }
 
-    executeControlled(workflow, execution = {mode: 'workflow'}) {
+    executeWorkflow(workflow, execution = {mode: 'workflow'}) {
         return this.request('/api/execute', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({apiVersion: 1, workflow, execution})
         });
+    }
+
+    // Backward-compatible alias for any Batch 7B callers.
+    executeControlled(workflow, execution = {mode: 'workflow'}) {
+        return this.executeWorkflow(workflow, execution);
     }
 
     health() {
@@ -38,6 +52,5 @@ class ExecutionClient {
         });
     }
 }
-// Dev console: await executionClient.health();
-// Dev console: await executionClient.validateWorkflow(board.getWorkflowData());
+
 const executionClient = new ExecutionClient();

@@ -6860,7 +6860,7 @@ class Board {
         const scriptSection =
             this.createPropertiesSection(
                 "Script",
-                "Batch 7B runs on PHP. Only Pass-through and Sum operations with empty script source are executable. Python, Bash, JavaScript, expressions and decisions require the isolated runner batch."
+                "Runs through the PHP backend. Python exposes inputs, inputsById, inputValues, value, and a result variable. JavaScript receives the same values and returns its result. Bash receives value/WF_INPUT_* variables and uses stdout as its result."
             );
         scriptSection.section.dataset.tour = "properties-script";
 
@@ -6948,13 +6948,13 @@ class Board {
             "Pass-through":
                 "The first input is copied to the first output.",
             "Expression":
-                "A + B",
+                "Expression execution is disabled; choose Python, JavaScript, Bash, or Pass-through.",
             "Bash":
-                "sleep 1\necho $value",
+                "# stdout becomes the workflow result\necho \"$value\"",
             "Python":
-                "time.sleep(1)\nprint(value)",
+                "# assign the workflow result\nresult = value",
             "JavaScript":
-                "return value + 1"
+                "// return the workflow result\nreturn value;"
         };
 
         sourceInput.placeholder =
@@ -7034,7 +7034,7 @@ class Board {
         delayRow.appendChild(delayLabel);
         delayRow.appendChild(delayInput);
 
-        if (widget.type === "Process") {
+        if (widget.type === "Process" && widget.language === "Pass-through") {
             const operationRow = document.createElement("div");
             operationRow.className = "property-row";
             const operationLabel = document.createElement("label");
@@ -11576,7 +11576,7 @@ class Board {
     }
 
     stopWorkflowRun() {
-        if (this.serverRequestPending) return; // Synchronous PHP requests cannot be cancelled in Batch 7B.
+        if (this.serverRequestPending) return; // Batch 7C synchronous PHP requests cannot be cancelled mid-request.
         if (!this.isWorkflowRunning) return;
 
         const checkpoint = this.executionCheckpoint;
@@ -12249,6 +12249,7 @@ class Board {
             await this.showMessageDialog({title: "Select a Widget", message: "Select a widget before running this mode.", tone: "info"});
             return;
         }
+
         const requestSnapshot = JSON.stringify(this.getReproducibleWorkflowData());
         const workflow = this.getWorkflowData();
         const execution = {mode, selectedWidgetIds: selected.map(item => item.id)};
@@ -12256,17 +12257,22 @@ class Board {
         this.serverRequestPending = true;
         this.setExecutionConsoleOpen(true);
         this.setExecutionConsoleStatus("running");
-        this.appendExecutionLog("info", "Sending controlled workflow to PHP.",
-            "Only Pass-through, empty Expression and allowlisted server operations are supported. User scripts and Decision branches are not executed in Batch 7B.");
+        this.appendExecutionLog(
+            "info",
+            "Sending workflow to the PHP execution service.",
+            "Python, JavaScript, and Bash run as short-lived local child processes with timeout/output limits. This Batch 7C runner is for local development and is not a production sandbox."
+        );
         this.updateRunControls();
+
         try {
-            const response = await executionClient.executeControlled(workflow, execution);
+            const response = await executionClient.executeWorkflow(workflow, execution);
             if (JSON.stringify(this.getReproducibleWorkflowData()) !== requestSnapshot) {
                 throw new Error("The workflow changed during the PHP request. Results were discarded; run it again.");
             }
             if (!response || response.ok !== true || !Array.isArray(response.nodes) || !Array.isArray(response.executionOrder)) {
                 throw new Error("PHP returned an invalid workflow response.");
             }
+
             const lookup = new Map(this.widgets.map(item => [item.id, item]));
             const order = response.executionOrder.map(id => lookup.get(id));
             if (order.some(item => !item) || response.nodes.length !== order.length) {
@@ -12282,10 +12288,12 @@ class Board {
                     throw new Error("PHP returned an unknown port ID.");
                 }
             }
+
             const plan = {mode, order, label: mode === "workflow" ? "full workflow" : `${order.length} selected/downstream widgets`};
             const runId = ++this.executionRunId;
             const record = this.createResearchRunRecord({runId, plan, widget, report: {warnings: []}, executionOrder: order});
             this.clearBranchExecutionState({clearDecisionResults: true});
+
             for (let i = 0; i < order.length; i++) {
                 const item = order[i], result = response.nodes[i];
                 result.inputs.forEach(port => {
@@ -12296,13 +12304,25 @@ class Board {
                     const output = item.outputs.find(existing => existing.id === port.id);
                     output.value = port.value;
                 });
+
                 item.lastDecisionResult = null;
                 if (typeof item.markRunFresh === "function") item.markRunFresh();
                 const runtime = Number(result.metrics?.wallTimeMs) || 0;
-                // Node allocation deltas are PHP bookkeeping metrics, not script peak memory.
-                item.setStatus("finished", runtime, 0, "");
+                const memoryBytes = Number(result.metrics?.memoryBytes);
+                const memoryKb = Number.isFinite(memoryBytes) && memoryBytes >= 0 ? memoryBytes / 1024 : 0;
+                item.setStatus("finished", runtime, memoryKb, "");
                 item.refreshContent();
+
+                const stdout = typeof result.logs?.stdout === "string" ? result.logs.stdout.trim() : "";
+                const stderr = typeof result.logs?.stderr === "string" ? result.logs.stderr.trim() : "";
+                if (stdout) {
+                    this.appendExecutionLog("info", `${item.title} stdout`, stdout.slice(0, 6000));
+                }
+                if (stderr) {
+                    this.appendExecutionLog("warning", `${item.title} stderr`, stderr.slice(0, 6000));
+                }
             }
+
             for (const connection of this.connections) {
                 if (!order.includes(connection.sourceWidget)) continue;
                 const source = connection.sourceWidget.outputs.find(port => port.id === connection.sourcePortId);
@@ -12311,12 +12331,28 @@ class Board {
                 connection.lastUpdatedAt = new Date().toISOString();
                 connection.lastRunId = runId;
             }
+
             this.lastRunRuntimeMs = Number(response.metrics?.wallTimeMs) || 0;
-            this.lastRunMemoryKb = 0;
-            this.finalizeResearchRunRecord(record, order, {status: "finished", runtimeMs: this.lastRunRuntimeMs, memoryKb: 0});
+            const maxNodeMemoryBytes = Number(response.metrics?.maxNodeMemoryBytes);
+            this.lastRunMemoryKb = Number.isFinite(maxNodeMemoryBytes) && maxNodeMemoryBytes >= 0
+                ? maxNodeMemoryBytes / 1024
+                : 0;
+            this.finalizeResearchRunRecord(record, order, {
+                status: "finished",
+                runtimeMs: this.lastRunRuntimeMs,
+                memoryKb: this.lastRunMemoryKb
+            });
             this.setExecutionConsoleStatus("finished");
-            this.appendExecutionLog("success", "PHP workflow run finished.",
-                `${order.length} widgets · ${this.lastRunRuntimeMs.toFixed(2)} ms PHP orchestration wall time · PHP process peak: ${response.metrics?.phpPeakMemoryBytes ?? "unknown"} bytes. No scripts executed.${response.usesCachedInputs ? " Reused saved upstream outputs." : ""}`);
+
+            const memorySummary = this.lastRunMemoryKb > 0
+                ? ` · max measured node memory ${this.lastRunMemoryKb.toFixed(1)} KB`
+                : " · node memory unavailable for one or more runtimes";
+            this.appendExecutionLog(
+                "success",
+                "PHP workflow run finished.",
+                `${order.length} widgets · ${this.lastRunRuntimeMs.toFixed(2)} ms wall time${memorySummary} · ${Number(response.scriptNodeCount) || 0} script node(s).${response.usesCachedInputs ? " Reused saved upstream outputs." : ""}`
+            );
+
             this.updateStats();
             this.updateWorkflowMap();
             this.saveState();
@@ -12325,8 +12361,19 @@ class Board {
             return response;
         } catch (error) {
             this.setExecutionConsoleStatus("error");
-            this.appendExecutionLog("error", "PHP run not completed.", error.message, {open: true});
-            await this.showMessageDialog({title: "PHP Run Not Available", message: error.message + "\n\nYour workflow values were not changed. Real Python, Bash, JavaScript, and Decision execution are deferred to the isolated runner batch.", tone: "warning", confirmLabel: "Close"});
+            const stderr = typeof error.details?.stderr === "string" ? error.details.stderr.trim() : "";
+            this.appendExecutionLog(
+                "error",
+                "PHP run not completed.",
+                stderr ? `${error.message}\n${stderr.slice(0, 6000)}` : error.message,
+                {open: true}
+            );
+            await this.showMessageDialog({
+                title: "Server Run Failed",
+                message: `${error.message}\n\nYour workflow values were not changed. Check the Execution Console for script output.`,
+                tone: "warning",
+                confirmLabel: "Close"
+            });
             return null;
         } finally {
             this.isWorkflowRunning = false;
@@ -12336,6 +12383,7 @@ class Board {
         }
     }
 
+
     async runWorkflow(
         {
             mode = "workflow",
@@ -12343,9 +12391,9 @@ class Board {
             widgets = null
         } = {}
     ) {
-        // Batch 7B: all normal Run actions use the PHP API. Even when the
+        // Batch 7C: all normal Run actions use the PHP API. Even when the
         // client script is missing or the server is offline, NEVER fall back
-        // to the legacy browser evaluator left for later migration.
+        // to the legacy browser evaluator retained temporarily below.
         if (typeof executionClient === "undefined") {
             await this.showMessageDialog({
                 title: "PHP Backend Required",
@@ -12355,8 +12403,8 @@ class Board {
             return null;
         }
         return this.runControlledPHPWorkflow({mode, widget, widgets});
-        // Legacy simulator retained temporarily below, now unreachable from
-        // Run. It will be removed when the isolated runner replaces it.
+        // Legacy simulator retained temporarily below and unreachable from
+        // Run. Remove it once the server execution path has completed final regression testing.
         if (this.isWorkflowRunning) {
             return;
         }

@@ -74,17 +74,11 @@ class Widget {
         this.lastDecisionResult = null;
 
         /*
-         * Script configuration. The Board owns execution.
-         * Bash/Python/JavaScript are intentionally interpreted
-         * by the local workflow simulator rather than executed
-         * as unrestricted system processes.
+         * Script configuration. The Board owns UI state; execution is sent
+         * to the PHP backend. New Process widgets start as Pass-through so
+         * they are runnable before a script language is explicitly chosen.
          */
-        this.language =
-            type === "Start" ||
-            type === "End" ||
-            type === "Decision"
-                ? "Pass-through"
-                : "Expression";
+        this.language = "Pass-through";
 
         this.source = "";
         // Explicit allowlisted PHP operation; never source-code evaluation.
