@@ -1,7 +1,25 @@
 <?php
 declare(strict_types=1);
 // Run while the dev server is running: php tests/api-smoke.php
-$base = 'http://127.0.0.1:8000';
+$base = getenv('WORKFLOW_TEST_BASE') ?: 'http://127.0.0.1:8000';
+
+function requestRaw(string $name, string $url, string $method, string $body, int $status, int $timeout = 20): array {
+    $options = ['http' => [
+        'method' => $method,
+        'ignore_errors' => true,
+        'header' => "Content-Type: application/json\r\n",
+        'content' => $body,
+        'timeout' => $timeout,
+    ]];
+    $response = @file_get_contents($url, false, stream_context_create($options));
+    $statusLine = $http_response_header[0] ?? '';
+    $decoded = json_decode((string)$response, true);
+    if (!preg_match('/\s' . $status . '\s/', $statusLine) || !is_array($decoded)) {
+        fwrite(STDERR, "FAIL $name: $statusLine $response\n"); exit(1);
+    }
+    echo "PASS $name ($status)\n";
+    return $decoded;
+}
 
 function requestJson(string $name, string $url, string $method, ?array $body, int $status, int $timeout = 20): array {
     $headers = $method === 'GET' ? '' : "Content-Type: application/json\r\n";
@@ -34,20 +52,23 @@ function workflowFor(string $language = 'Pass-through', string $source = '', str
 }
 
 function executeWorkflow(string $name, array $workflow, int $expectedStatus): array {
-    return requestJson($name, 'http://127.0.0.1:8000/api/execute', 'POST', [
+    global $base;
+    return requestJson($name, "$base/api/execute", 'POST', [
         'apiVersion'=>1, 'workflow'=>$workflow, 'execution'=>['mode'=>'workflow']
     ], $expectedStatus);
 }
 
 function createRun(string $name, array $workflow): array {
-    return requestJson($name, 'http://127.0.0.1:8000/api/runs', 'POST', [
+    global $base;
+    return requestJson($name, "$base/api/runs", 'POST', [
         'apiVersion'=>1, 'workflow'=>$workflow, 'execution'=>['mode'=>'workflow']
     ], 202);
 }
 
 function waitForRun(string $jobId, array $terminal = ['finished','failed','cancelled'], int $tries = 120): array {
+    global $base;
     for ($i = 0; $i < $tries; $i++) {
-        $job = requestJson('poll persistent run', "http://127.0.0.1:8000/api/runs/$jobId", 'GET', null, 200);
+        $job = requestJson('poll persistent run', "$base/api/runs/$jobId", 'GET', null, 200);
         if (in_array($job['status'] ?? '', $terminal, true)) return $job;
         usleep(100000);
     }
@@ -55,8 +76,9 @@ function waitForRun(string $jobId, array $terminal = ['finished','failed','cance
 }
 
 function waitUntilRunning(string $jobId, int $tries = 80): array {
+    global $base;
     for ($i = 0; $i < $tries; $i++) {
-        $job = requestJson('poll run until running', "http://127.0.0.1:8000/api/runs/$jobId", 'GET', null, 200);
+        $job = requestJson('poll run until running', "$base/api/runs/$jobId", 'GET', null, 200);
         if (($job['status'] ?? '') === 'running') return $job;
         if (in_array(($job['status'] ?? ''), ['finished','failed','cancelled'], true)) {
             fwrite(STDERR, 'FAIL run reached terminal state before cancellation: ' . json_encode($job) . PHP_EOL); exit(1);
@@ -73,14 +95,20 @@ $valid = ['apiVersion' => 1, 'workflow' => ['widgets' => [
 
 $health = requestJson('health', "$base/api/health", 'GET', null, 200);
 if (($health['scriptExecutionEnabled'] ?? false) !== true || ($health['persistentJobsEnabled'] ?? false) !== true || ($health['jobCancellationEnabled'] ?? false) !== true) {
-    fwrite(STDERR, "FAIL health does not advertise Batch 7D jobs/runtimes\n"); exit(1);
+    fwrite(STDERR, "FAIL health does not advertise jobs/runtimes\n"); exit(1);
+}
+if (($health['executionBackend'] ?? '') !== 'local-process' || !is_array($health['limits'] ?? null)) {
+    fwrite(STDERR, "FAIL health does not advertise hardened execution backend/limits\n"); exit(1);
 }
 echo 'Detected runtimes: ' . json_encode($health['runtimes']) . PHP_EOL;
+echo 'Configured limits: ' . json_encode($health['limits']) . PHP_EOL;
+$oversized = json_encode(['apiVersion'=>1,'padding'=>str_repeat('x', (int)$health['limits']['requestBytes'])], JSON_THROW_ON_ERROR);
+requestRaw('oversized request rejected', "$base/api/validate", 'POST', $oversized, 413);
 requestJson('valid workflow', "$base/api/validate", 'POST', $valid, 200);
 $invalid = $valid; $invalid['workflow']['connections'][0]['targetPortId'] = 'missing';
 requestJson('invalid port rejected', "$base/api/validate", 'POST', $invalid, 422);
 
-echo 'Check backend file protection separately: curl.exe -I http://127.0.0.1:8000/backend/src/JobRepository.php (expect 404).' . PHP_EOL;
+echo 'Check backend file protection separately against your dev-server base URL: /backend/src/JobRepository.php (expect 404).' . PHP_EOL;
 
 $result = executeWorkflow('compat synchronous PHP sum', workflowFor(), 200);
 $node = end($result['nodes']);
@@ -125,6 +153,15 @@ if (!empty($health['runtimes']['Bash'])) {
     $node = end($result['nodes']);
     if (($node['outputs'][0]['value'] ?? null) !== 5) { fwrite(STDERR, "FAIL Bash API result\n"); exit(1); }
 } else echo "SKIP Bash API runtime unavailable; install Git Bash or set WORKFLOW_BASH\n";
+
+if (!empty($health['runtimes']['Python'])) {
+    $failed = executeWorkflow('Python errors are sanitized', workflowFor('Python', "raise RuntimeError('api-boom')", 'pass-through'), 422);
+    $encoded = json_encode($failed, JSON_THROW_ON_ERROR);
+    if (str_contains($encoded, 'workflow-run-') || preg_match('/[A-Za-z]:\\\\Users\\\\/i', $encoded)) {
+        fwrite(STDERR, "FAIL Python API error leaked a local path\n"); exit(1);
+    }
+    echo "PASS Python API error redacts local paths\n";
+}
 
 $bad = workflowFor('Expression', '1+2', 'pass-through');
 executeWorkflow('Expression execution rejected', $bad, 422);

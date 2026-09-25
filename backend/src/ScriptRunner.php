@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/BackendConfig.php';
 require_once __DIR__ . '/RuntimeLocator.php';
 
 final class ScriptExecutionException extends RuntimeException
@@ -19,7 +20,7 @@ final class ScriptExecutionException extends RuntimeException
 }
 
 /**
- * Batch 7D local-development process runner with cooperative cancellation.
+ * Local-development process runner with cooperative cancellation and bounded resources.
  *
  * Security boundary: NONE. This limits time/output and removes most inherited
  * environment variables, but it does not isolate filesystem/network/process
@@ -28,11 +29,6 @@ final class ScriptExecutionException extends RuntimeException
  */
 final class ScriptRunner
 {
-    private const DEFAULT_TIMEOUT_MS = 5000;
-    private const MAX_TIMEOUT_MS = 15000;
-    private const MAX_SOURCE_BYTES = 30000;
-    private const MAX_STREAM_BYTES = 262144; // 256 KiB each for stdout/stderr.
-
     public static function runtimeAvailability(): array
     {
         return RuntimeLocator::availability();
@@ -40,6 +36,10 @@ final class ScriptRunner
 
     public static function assertRuntimeAvailable(string $language): void
     {
+        $language = self::normalizeLanguage($language);
+        if (!RuntimeLocator::isAllowed($language)) {
+            throw new DomainException("$language execution is disabled by the server runtime allowlist.");
+        }
         if (RuntimeLocator::locate($language) === null) {
             $hint = $language === 'Bash' && PHP_OS_FAMILY === 'Windows'
                 ? ' Install Git Bash or set WORKFLOW_BASH to a bash.exe path. The Windows WSL launcher alone is not enough without a Linux distribution.'
@@ -56,24 +56,27 @@ final class ScriptRunner
         $language = self::normalizeLanguage($language);
         $sourceBytes = strlen($source);
         if ($sourceBytes === 0) throw new DomainException("$language source cannot be empty.");
-        if ($sourceBytes > self::MAX_SOURCE_BYTES) throw new DomainException("$language source exceeds " . self::MAX_SOURCE_BYTES . ' bytes.');
+        if ($sourceBytes > BackendConfig::scriptMaxSourceBytes()) throw new DomainException("$language source exceeds " . BackendConfig::scriptMaxSourceBytes() . ' bytes.');
 
         $executable = RuntimeLocator::locate($language);
         if ($executable === null) self::assertRuntimeAvailable($language);
 
-        $timeoutMs = (int)($options['timeoutMs'] ?? self::DEFAULT_TIMEOUT_MS);
+        $timeoutMs = (int)($options['timeoutMs'] ?? BackendConfig::scriptDefaultTimeoutMs());
         $shouldCancel = isset($options['shouldCancel']) && is_callable($options['shouldCancel'])
             ? $options['shouldCancel']
             : static fn(): bool => false;
         if ($shouldCancel()) {
             throw new ScriptExecutionException("$language script cancelled before start.", $language, '', '', null, false, true);
         }
-        $timeoutMs = max(100, min(self::MAX_TIMEOUT_MS, $timeoutMs));
+        $timeoutMs = max(100, min(BackendConfig::scriptMaxTimeoutMs(), $timeoutMs));
         $tempDir = self::makeTempDir();
 
         try {
             $payload = self::buildPayload($inputs);
             $payloadJson = json_encode($payload, JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE);
+            if (strlen($payloadJson) > BackendConfig::scriptMaxInputBytes()) {
+                throw new DomainException("$language input payload exceeds " . BackendConfig::scriptMaxInputBytes() . ' bytes.');
+            }
             $resultFile = $tempDir . DIRECTORY_SEPARATOR . 'result.json';
             $env = self::baseEnvironment();
             $command = [];
@@ -82,18 +85,18 @@ final class ScriptRunner
             if ($language === 'Python') {
                 $userFile = $tempDir . DIRECTORY_SEPARATOR . 'user.py';
                 $wrapperFile = $tempDir . DIRECTORY_SEPARATOR . 'runner.py';
-                file_put_contents($userFile, $source, LOCK_EX);
-                file_put_contents($wrapperFile, self::pythonWrapper(), LOCK_EX);
+                self::writeTempFile($userFile, $source);
+                self::writeTempFile($wrapperFile, self::pythonWrapper());
                 $command = [$executable, '-I', $wrapperFile, $userFile, $resultFile];
             } elseif ($language === 'JavaScript') {
                 $userFile = $tempDir . DIRECTORY_SEPARATOR . 'user.js';
                 $wrapperFile = $tempDir . DIRECTORY_SEPARATOR . 'runner.js';
-                file_put_contents($userFile, $source, LOCK_EX);
-                file_put_contents($wrapperFile, self::javascriptWrapper(), LOCK_EX);
+                self::writeTempFile($userFile, $source);
+                self::writeTempFile($wrapperFile, self::javascriptWrapper());
                 $command = [$executable, $wrapperFile, $userFile, $resultFile];
             } else { // Bash
                 $userFile = $tempDir . DIRECTORY_SEPARATOR . 'user.sh';
-                file_put_contents($userFile, $source, LOCK_EX);
+                self::writeTempFile($userFile, $source);
                 $command = [$executable, $userFile];
                 $resultMode = 'stdout';
                 $env += self::bashInputEnvironment($payload);
@@ -123,7 +126,7 @@ final class ScriptRunner
             }
             if ($process['outputLimitExceeded']) {
                 throw new ScriptExecutionException(
-                    "$language script exceeded the 256 KiB stdout/stderr limit.",
+                    "$language script exceeded the configured stdout/stderr limit.",
                     $language,
                     $process['stdout'],
                     $process['stderr'],
@@ -148,6 +151,16 @@ final class ScriptRunner
                 if (!is_file($resultFile)) {
                     throw new ScriptExecutionException(
                         "$language script finished without producing the runner result envelope.",
+                        $language,
+                        $process['stdout'],
+                        $process['stderr'],
+                        $process['exitCode']
+                    );
+                }
+                $resultSize = @filesize($resultFile);
+                if ($resultSize === false || $resultSize > BackendConfig::scriptMaxResultBytes()) {
+                    throw new ScriptExecutionException(
+                        "$language runner result exceeded the configured result limit.",
                         $language,
                         $process['stdout'],
                         $process['stderr'],
@@ -204,6 +217,7 @@ final class ScriptRunner
                     'timeoutLimitMs' => $timeoutMs,
                 ],
                 'runtime' => [
+                    'backend' => 'local-process',
                     'language' => $language,
                     'executable' => basename($executable),
                 ],
@@ -284,6 +298,7 @@ final class ScriptRunner
     private static function makeTempDir(): string
     {
         $base = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR);
+        self::cleanupStaleTempDirectories($base);
         for ($i = 0; $i < 5; $i++) {
             $path = $base . DIRECTORY_SEPARATOR . 'workflow-run-' . bin2hex(random_bytes(8));
             if (@mkdir($path, 0700, false)) return $path;
@@ -323,7 +338,8 @@ final class ScriptRunner
                 self::terminateProcess($process, (int)($lastStatus['pid'] ?? 0));
                 break;
             }
-            if (strlen($stdout) > self::MAX_STREAM_BYTES || strlen($stderr) > self::MAX_STREAM_BYTES) {
+            $streamLimit = BackendConfig::scriptMaxStreamBytes();
+            if (strlen($stdout) > $streamLimit || strlen($stderr) > $streamLimit) {
                 $outputLimitExceeded = true;
                 self::terminateProcess($process, (int)($lastStatus['pid'] ?? 0));
                 break;
@@ -352,8 +368,8 @@ final class ScriptRunner
         $exitCode = $cachedExitCode ?? ($closeCode >= 0 ? $closeCode : null);
 
         return [
-            'stdout' => substr($stdout, 0, self::MAX_STREAM_BYTES),
-            'stderr' => substr($stderr, 0, self::MAX_STREAM_BYTES),
+            'stdout' => substr($stdout, 0, BackendConfig::scriptMaxStreamBytes()),
+            'stderr' => substr($stderr, 0, BackendConfig::scriptMaxStreamBytes()),
             'wallTimeMs' => round((hrtime(true) - $started) / 1000000, 4),
             'exitCode' => $exitCode,
             'timedOut' => $timedOut,
@@ -374,6 +390,22 @@ final class ScriptRunner
         if (is_resource($killer)) {
             foreach ($pipes as $pipe) @fclose($pipe);
             @proc_close($killer);
+        }
+    }
+
+    private static function writeTempFile(string $path, string $contents): void
+    {
+        if (@file_put_contents($path, $contents, LOCK_EX) === false) {
+            throw new RuntimeException('Could not prepare the temporary script workspace.');
+        }
+    }
+
+    private static function cleanupStaleTempDirectories(string $base): void
+    {
+        $cutoff = time() - BackendConfig::tempRetentionSeconds();
+        foreach (glob($base . DIRECTORY_SEPARATOR . 'workflow-run-*', GLOB_ONLYDIR) ?: [] as $directory) {
+            $mtime = @filemtime($directory);
+            if ($mtime !== false && $mtime < $cutoff) self::removeDirectory($directory);
         }
     }
 

@@ -7,6 +7,16 @@ function ensureScript(bool $ok, string $name): void {
     echo "PASS $name\n";
 }
 
+
+function ensureMetricContract(array $result, string $name): void {
+    $metrics = $result['metrics'] ?? [];
+    foreach (['wallTimeMs','exitCode','memoryBytes','memoryMetric','stdoutBytes','stderrBytes','timeoutLimitMs'] as $key) {
+        ensureScript(array_key_exists($key, $metrics), "$name metric $key present");
+    }
+    ensureScript(($result['runtime']['backend'] ?? '') === 'local-process', "$name runtime backend labeled");
+    ensureScript(is_string($result['runtime']['language'] ?? null), "$name runtime language labeled");
+}
+
 $availability = ScriptRunner::runtimeAvailability();
 echo 'Runtime availability: ' . json_encode($availability) . "\n";
 $inputs = [
@@ -19,6 +29,7 @@ if ($availability['Python']) {
     ensureScript($r['result'] === 12, 'Python returns 12 from two inputs');
     ensureScript(str_contains($r['stdout'], 'python-log'), 'Python stdout captured as log');
     ensureScript(($r['metrics']['exitCode'] ?? null) === 0 && ($r['metrics']['wallTimeMs'] ?? 0) > 0, 'Python metrics returned');
+    ensureMetricContract($r, 'Python');
 } else {
     echo "SKIP Python runtime unavailable\n";
 }
@@ -28,6 +39,7 @@ if ($availability['JavaScript']) {
     ensureScript($r['result'] === 12, 'JavaScript returns 12 from two inputs');
     ensureScript(str_contains($r['stdout'], 'js-log'), 'JavaScript stdout captured as log');
     ensureScript(($r['metrics']['exitCode'] ?? null) === 0 && ($r['metrics']['wallTimeMs'] ?? 0) > 0, 'JavaScript metrics returned');
+    ensureMetricContract($r, 'JavaScript');
 } else {
     echo "SKIP JavaScript runtime unavailable\n";
 }
@@ -36,6 +48,7 @@ if ($availability['Bash']) {
     $r = ScriptRunner::run('Bash', 'echo "$value"', [['id' => 'a', 'name' => 'A', 'value' => 5]]);
     ensureScript($r['result'] === 5, 'Bash stdout JSON/number becomes result');
     ensureScript(($r['metrics']['exitCode'] ?? null) === 0, 'Bash exit code captured');
+    ensureMetricContract($r, 'Bash');
 } else {
     echo "SKIP Bash runtime unavailable (Windows users: Git Bash or WORKFLOW_BASH is required)\n";
 }

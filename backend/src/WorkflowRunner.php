@@ -1,10 +1,11 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/ScriptRunner.php';
+require_once __DIR__ . '/BackendConfig.php';
+require_once __DIR__ . '/ExecutionBackendFactory.php';
 
 /**
- * Batch 7D workflow engine used by synchronous compatibility calls and background jobs.
+ * Workflow engine used by synchronous compatibility calls and persistent background jobs.
  *
  * Pass-through/sum execute inside PHP. Python, JavaScript and Bash execute in
  * short-lived LOCAL DEVELOPMENT child processes through ScriptRunner. Background
@@ -19,9 +20,13 @@ final class WorkflowRunner
         $started = hrtime(true);
         $widgets = $workflow['widgets'];
         $edges = $workflow['connections'];
-        if (count($widgets) > 100 || count($edges) > 400) {
-            throw new DomainException('Synchronous execution allows at most 100 widgets and 400 connections per run.');
+        if (count($widgets) > BackendConfig::executionMaxWidgets() || count($edges) > BackendConfig::executionMaxConnections()) {
+            throw new DomainException(
+                'Execution allows at most ' . BackendConfig::executionMaxWidgets() .
+                ' widgets and ' . BackendConfig::executionMaxConnections() . ' connections per run.'
+            );
         }
+        $executionBackend = ExecutionBackendFactory::create();
 
         $byId = [];
         foreach ($widgets as $widget) $byId[$widget['id']] = $widget;
@@ -30,8 +35,8 @@ final class WorkflowRunner
             throw new DomainException('Unsupported execution mode.');
         }
         $selected = $options['selectedWidgetIds'] ?? [];
-        if (!is_array($selected) || !array_is_list($selected) || count($selected) > 100) {
-            throw new DomainException('selectedWidgetIds must be an array of at most 100 widget IDs.');
+        if (!is_array($selected) || !array_is_list($selected) || count($selected) > BackendConfig::selectedMaxWidgets()) {
+            throw new DomainException('selectedWidgetIds must be an array of at most ' . BackendConfig::selectedMaxWidgets() . ' widget IDs.');
         }
         foreach ($selected as $id) {
             if (!is_string($id) || !isset($byId[$id])) throw new DomainException('Unknown selected widget.');
@@ -53,7 +58,7 @@ final class WorkflowRunner
         // Reject the whole request before starting any user process.
         foreach ($order as $id) {
             if ($shouldCancel()) throw new WorkflowCancelledException('Workflow run cancelled.');
-            self::preflightNode($byId[$id]);
+            self::preflightNode($byId[$id], $executionBackend);
         }
 
         $resolvedOutputs = [];
@@ -142,7 +147,7 @@ final class WorkflowRunner
             } elseif (in_array($language, ['Python', 'JavaScript', 'Bash'], true)) {
                 $scriptNodeCount++;
                 try {
-                    $script = ScriptRunner::run($language, (string)($node['source'] ?? ''), $inputs, ['shouldCancel' => $shouldCancel]);
+                    $script = $executionBackend->run($language, (string)($node['source'] ?? ''), $inputs, ['shouldCancel' => $shouldCancel]);
                 } catch (ScriptExecutionException $exception) {
                     if ($exception->cancelled) throw new WorkflowCancelledException('Workflow run cancelled.');
                     throw new ScriptExecutionException(
@@ -157,7 +162,7 @@ final class WorkflowRunner
                 $outputs = self::mapResultToOutputs($node, $script['result']);
                 $logs = ['stdout' => $script['stdout'], 'stderr' => $script['stderr']];
                 $runtime = $script['runtime'];
-                $metrics = $script['metrics'] + ['executionKind' => 'local-script-process'];
+                $metrics = $script['metrics'] + ['executionKind' => $executionBackend->name()];
             } else {
                 $result = self::runBuiltInOperation($node, $inputs);
                 $outputs = self::mapResultToOutputs($node, $result);
@@ -207,7 +212,7 @@ final class WorkflowRunner
                 'measurementScope' => 'Workflow wall time is measured by PHP. Script-node memory is runtime-specific and labeled per node.',
             ],
             'message' => $scriptNodeCount > 0
-                ? 'Workflow completed using local Python/JavaScript/Bash child processes. This local runner is not a production sandbox.'
+                ? 'Workflow completed using the configured script execution backend. The current local-process backend is not a production sandbox.'
                 : 'Workflow completed using PHP built-in operations.',
         ];
     }
@@ -266,7 +271,7 @@ final class WorkflowRunner
         return [$order, $incoming];
     }
 
-    private static function preflightNode(array $node): void
+    private static function preflightNode(array $node, ExecutionBackend $executionBackend): void
     {
         $id = (string)$node['id'];
         $type = (string)($node['type'] ?? 'Process');
@@ -300,7 +305,7 @@ final class WorkflowRunner
         if (in_array($language, ['Python', 'JavaScript', 'Bash'], true)) {
             if ($type !== 'Process') throw new DomainException("Only Process widgets may execute $language scripts.");
             if ($source === '') throw new DomainException("Widget '$id' has empty $language source.");
-            ScriptRunner::assertRuntimeAvailable($language);
+            $executionBackend->assertRuntimeAvailable($language);
             return;
         }
         if ($language !== 'Pass-through') throw new DomainException("Widget '$id' uses unsupported language '$language'.");

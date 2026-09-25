@@ -2,8 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/src/JobRepository.php';
-require_once __DIR__ . '/src/RuntimeLocator.php';
-require_once __DIR__ . '/src/ScriptRunner.php';
+require_once __DIR__ . '/src/ErrorSanitizer.php';
 require_once __DIR__ . '/src/WorkflowRunner.php';
 
 $jobId = $argv[1] ?? '';
@@ -77,15 +76,7 @@ try {
             $job['error'] = null;
         } else {
             $job['status'] = 'failed';
-            $job['error'] = [
-                'code' => 'SCRIPT_EXECUTION_FAILED',
-                'message' => $exception->getMessage(),
-                'language' => $exception->language,
-                'exitCode' => $exception->exitCode,
-                'timedOut' => $exception->timedOut,
-                'stdout' => substr($exception->stdout, 0, 4000),
-                'stderr' => substr($exception->stderr, 0, 4000),
-            ];
+            $job['error'] = ErrorSanitizer::scriptException($exception);
         }
         $job['progress']['currentWidgetId'] = null;
         $job['completedAt'] = gmdate('c');
@@ -93,20 +84,26 @@ try {
     });
     exit(1);
 } catch (Throwable $exception) {
-    JobRepository::mutate($jobId, static function (array $job) use ($exception): array {
-        if (($job['cancelRequested'] ?? false) === true) {
-            $job['status'] = 'cancelled';
-            $job['error'] = null;
-        } else {
-            $job['status'] = 'failed';
-            $job['error'] = [
-                'code' => $exception instanceof DomainException ? 'UNSUPPORTED_OR_INVALID_EXECUTION' : 'RUNNER_FAILURE',
-                'message' => $exception instanceof DomainException ? $exception->getMessage() : 'The local background worker could not complete this run.',
-            ];
-        }
-        $job['progress']['currentWidgetId'] = null;
-        $job['completedAt'] = gmdate('c');
-        return $job;
-    });
+    try {
+        JobRepository::mutate($jobId, static function (array $job) use ($exception): array {
+            if (($job['cancelRequested'] ?? false) === true) {
+                $job['status'] = 'cancelled';
+                $job['error'] = null;
+            } else {
+                $job['status'] = 'failed';
+                $job['error'] = [
+                    'code' => $exception instanceof DomainException ? 'UNSUPPORTED_OR_INVALID_EXECUTION' : 'RUNNER_FAILURE',
+                    'message' => $exception instanceof DomainException
+                        ? ErrorSanitizer::text($exception->getMessage())
+                        : 'The local background worker could not complete this run.',
+                ];
+            }
+            $job['progress']['currentWidgetId'] = null;
+            $job['completedAt'] = gmdate('c');
+            return $job;
+        });
+    } catch (Throwable $ignored) {
+        // If the job record itself is corrupted/unwritable there is no safe state to persist.
+    }
     exit(1);
 }

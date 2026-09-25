@@ -1,30 +1,48 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/BackendConfig.php';
+
 /**
  * Locates local development runtimes without invoking a shell.
- * Batch 7C is intentionally a local-process runner, not a production sandbox.
+ * The local-process backend is for development only, not a production sandbox.
  */
 final class RuntimeLocator
 {
     public static function locate(string $language): ?string
     {
-        $language = strtolower(trim($language));
-        return match ($language) {
-            'python' => self::findPython(),
-            'javascript', 'node', 'nodejs' => self::findNode(),
-            'bash' => self::findBash(),
-            default => null,
+        $canonical = self::canonicalLanguage($language);
+        if ($canonical === null || !in_array($canonical, BackendConfig::allowedScriptLanguages(), true)) return null;
+        return match ($canonical) {
+            'Python' => self::findPython(),
+            'JavaScript' => self::findNode(),
+            'Bash' => self::findBash(),
         };
     }
 
     public static function availability(): array
     {
         return [
-            'Python' => self::locate('python') !== null,
-            'JavaScript' => self::locate('javascript') !== null,
-            'Bash' => self::locate('bash') !== null,
+            'Python' => self::locate('Python') !== null,
+            'JavaScript' => self::locate('JavaScript') !== null,
+            'Bash' => self::locate('Bash') !== null,
         ];
+    }
+
+    public static function isAllowed(string $language): bool
+    {
+        $canonical = self::canonicalLanguage($language);
+        return $canonical !== null && in_array($canonical, BackendConfig::allowedScriptLanguages(), true);
+    }
+
+    private static function canonicalLanguage(string $language): ?string
+    {
+        return match (strtolower(trim($language))) {
+            'python' => 'Python',
+            'javascript', 'node', 'nodejs' => 'JavaScript',
+            'bash' => 'Bash',
+            default => null,
+        };
     }
 
     private static function findPython(): ?string

@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/BackendConfig.php';
+
 final class WorkflowValidator
 {
     public static function validate(mixed $workflow): array
@@ -11,11 +13,11 @@ final class WorkflowValidator
         }
         $widgets = $workflow['widgets'] ?? null;
         $connections = $workflow['connections'] ?? null;
-        if (!is_array($widgets) || !array_is_list($widgets) || count($widgets) > 500) {
-            $errors[] = 'widgets must be an array with at most 500 elements.';
+        if (!is_array($widgets) || !array_is_list($widgets) || count($widgets) > BackendConfig::workflowMaxWidgets()) {
+            $errors[] = 'widgets must be an array with at most ' . BackendConfig::workflowMaxWidgets() . ' elements.';
         }
-        if (!is_array($connections) || !array_is_list($connections) || count($connections) > 2000) {
-            $errors[] = 'connections must be an array with at most 2000 elements.';
+        if (!is_array($connections) || !array_is_list($connections) || count($connections) > BackendConfig::workflowMaxConnections()) {
+            $errors[] = 'connections must be an array with at most ' . BackendConfig::workflowMaxConnections() . ' elements.';
         }
         if ($errors !== []) return $errors;
         $ids = [];
@@ -31,10 +33,15 @@ final class WorkflowValidator
                 continue;
             }
             $ids[$id] = true;
+            if (isset($widget['source']) && !is_string($widget['source'])) {
+                $errors[] = "widgets[$index].source must be a string.";
+            } elseif (is_string($widget['source'] ?? null) && strlen($widget['source']) > BackendConfig::scriptMaxSourceBytes()) {
+                $errors[] = "widgets[$index].source exceeds the configured script source limit.";
+            }
             foreach (['inputs', 'outputs'] as $direction) {
                 $items = $widget[$direction] ?? [];
-                if (!is_array($items) || !array_is_list($items) || count($items) > 100) {
-                    $errors[] = "widgets[$index].$direction must be an array of at most 100 ports.";
+                if (!is_array($items) || !array_is_list($items) || count($items) > BackendConfig::maxPortsPerWidget()) {
+                    $errors[] = "widgets[$index].$direction must be an array of at most " . BackendConfig::maxPortsPerWidget() . " ports.";
                     continue;
                 }
                 foreach ($items as $portIndex => $port) {
